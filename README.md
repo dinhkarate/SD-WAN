@@ -68,7 +68,8 @@ Traffic từ PC sẽ đi qua VPS1, sau đó đến VPS2, và xuất ra Internet 
 ├── config.env                   # File cấu hình VPS (IP, user, port)
 ├── .github/
 │   └── workflows/
-│       └── deploy.yml           # GitHub Actions workflow
+│       ├── deploy.yml           # GitHub Actions workflow (Method 1)
+│       └── deploy-method2.yml   # GitHub Actions workflow (Method 2)
 ├── method-1-single-tunnel/      # Phương án 1
 │   ├── README.md
 │   ├── vps1/
@@ -123,19 +124,44 @@ Vào **Settings → Secrets and variables → Actions → New repository secret*
 > **Lưu ý:** Copy toàn bộ nội dung private key bao gồm cả `-----BEGIN OPENSSH PRIVATE KEY-----` và `-----END OPENSSH PRIVATE KEY-----`
 
 #### 3. Chạy Workflow
+
+**Có 2 workflows:**
+
+##### 📌 Method 1: Deploy SD-WAN to VPS
 1. Vào tab **Actions** trên GitHub
 2. Chọn **Deploy SD-WAN to VPS**
 3. Click **Run workflow**
-4. Chọn:
-   - **Method**: `method-1` hoặc `method-2`
-   - **Target**: `vps1`, `vps2`, hoặc `both`
+4. Chọn **Method**: `method-1`
+5. Click **Run workflow** để bắt đầu
+
+##### 📌 Method 2: Deploy SD-WAN Method 2 (Double Tunnel) ⭐
+Workflow riêng cho Method 2 với chain WireGuard hoàn chỉnh:
+
+1. Vào tab **Actions** trên GitHub
+2. Chọn **Deploy SD-WAN Method 2 (Double Tunnel)**
+3. Click **Run workflow**
+4. Chọn **Action**:
+   - `deploy-all`: Deploy toàn bộ (VPS2 → VPS1 → Exchange keys → Restart)
+   - `restart-wireguard`: Chỉ restart WireGuard trên cả 2 VPS
+   - `check-status`: Kiểm tra trạng thái WireGuard
 5. Click **Run workflow** để bắt đầu
 
 ### Workflow sẽ thực hiện:
+
+**Method 1:**
 1. Đọc cấu hình từ `config.env`
 2. SSH vào VPS được chọn
 3. Upload các file cấu hình WireGuard
 4. Chạy script setup tự động
+
+**Method 2 (deploy-all):**
+1. Đọc cấu hình từ `config.env`
+2. Deploy VPS2 (WireGuard Server + NAT)
+3. Deploy VPS1 (WireGuard Server cho PC + Client đến VPS2)
+4. Tự động exchange public keys giữa VPS1 và VPS2
+5. Restart WireGuard trên cả 2 VPS
+6. Kiểm tra kết nối VPS1 ↔ VPS2
+7. Hiển thị config cho PC
 
 ---
 
