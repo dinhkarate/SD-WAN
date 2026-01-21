@@ -79,37 +79,31 @@ sed -i "s|<VPS1_WG0_PRIVATE_KEY>|$WG0_PRIVATE_KEY|g" /etc/wireguard/wg0.conf
 sed -i "s|<VPS1_WG1_PRIVATE_KEY>|$WG1_PRIVATE_KEY|g" /etc/wireguard/wg1.conf
 
 echo ""
-echo "[5/7] Khởi động WireGuard wg0 (Server cho PC)..."
-wg-quick down wg0 2>/dev/null || true
-wg-quick up wg0
-systemctl enable wg-quick@wg0
+echo "[5/6] Enable WireGuard auto-start (nhưng KHÔNG khởi động ngay)..."
+# Chỉ enable, KHÔNG start - để tránh mất kết nối SSH
+systemctl enable wg-quick@wg0 2>/dev/null || true
+systemctl enable wg-quick@wg1 2>/dev/null || true
+echo "    ✅ WireGuard đã được enable auto-start"
 
 echo ""
-echo "[6/7] Khởi động WireGuard wg1 (Client đến VPS2)..."
-wg-quick down wg1 2>/dev/null || true
-wg-quick up wg1
-systemctl enable wg-quick@wg1
-
-echo ""
-echo "[7/7] Cấu hình routing..."
-# Route traffic từ PC (10.0.0.0/24) qua wg1 đến VPS2
-# Điều này được thực hiện tự động qua WireGuard AllowedIPs
+echo "[6/6] Mở firewall ports..."
+# Mở UDP port cho WireGuard
+iptables -A INPUT -p udp --dport 51820 -j ACCEPT 2>/dev/null || true
 
 echo ""
 echo "================================================"
 echo "  ✅ VPS1 WireGuard đã được cấu hình!"
 echo "================================================"
 echo ""
-echo "Trạng thái WireGuard:"
+echo "⚠️  QUAN TRỌNG: WireGuard CHƯA được khởi động!"
 echo ""
-echo "--- wg0 (Server cho PC) ---"
-wg show wg0
+echo "Để khởi động WireGuard thủ công, chạy:"
+echo "  wg-quick up wg0    # Server cho PC"
+echo "  wg-quick up wg1    # Client đến VPS2"
 echo ""
-echo "--- wg1 (Client đến VPS2) ---"
-wg show wg1
+echo "Hoặc restart server để auto-start."
 echo ""
-echo "Lưu ý:"
-echo "  1. Đảm bảo đã thay <PC_PUBLIC_KEY> trong wg0.conf"
-echo "  2. Đảm bảo đã thay <VPS2_PUBLIC_KEY> và VPS2_PUBLIC_IP trong wg1.conf"
-echo "  3. Firewall cần mở UDP port 51820"
+echo "🔑 Public Keys:"
+echo "  wg0 (cho PC):   $(cat /etc/wireguard/vps1_wg0_publickey)"
+echo "  wg1 (cho VPS2): $(cat /etc/wireguard/vps1_wg1_publickey)"
 echo ""

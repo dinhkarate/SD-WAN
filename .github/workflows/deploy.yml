@@ -11,6 +11,14 @@ on:
         options:
           - method-1
           - method-2
+      action:
+        description: 'Chọn hành động'
+        required: true
+        default: 'deploy'
+        type: choice
+        options:
+          - deploy
+          - start-wireguard
 
 jobs:
   load-config:
@@ -43,7 +51,7 @@ jobs:
   #=============================================================================
   deploy-vps1-method1:
     needs: load-config
-    if: ${{ github.event.inputs.method == 'method-1' }}
+    if: ${{ github.event.inputs.method == 'method-1' && github.event.inputs.action == 'deploy' }}
     runs-on: ubuntu-latest
     outputs:
       vps1_public_key: ${{ steps.get-key.outputs.public_key }}
@@ -86,7 +94,7 @@ jobs:
 
   deploy-vps2-method1:
     needs: [load-config, deploy-vps1-method1]
-    if: ${{ github.event.inputs.method == 'method-1' }}
+    if: ${{ github.event.inputs.method == 'method-1' && github.event.inputs.action == 'deploy' }}
     runs-on: ubuntu-latest
     outputs:
       vps2_public_key: ${{ steps.get-key.outputs.public_key }}
@@ -137,7 +145,7 @@ jobs:
 
   update-vps1-method1:
     needs: [load-config, deploy-vps1-method1, deploy-vps2-method1]
-    if: ${{ github.event.inputs.method == 'method-1' }}
+    if: ${{ github.event.inputs.method == 'method-1' && github.event.inputs.action == 'deploy' }}
     runs-on: ubuntu-latest
     steps:
       - name: Setup SSH Key
@@ -162,7 +170,7 @@ jobs:
   #=============================================================================
   deploy-vps2-method2:
     needs: load-config
-    if: ${{ github.event.inputs.method == 'method-2' }}
+    if: ${{ github.event.inputs.method == 'method-2' && github.event.inputs.action == 'deploy' }}
     runs-on: ubuntu-latest
     outputs:
       vps2_public_key: ${{ steps.get-key.outputs.public_key }}
@@ -205,7 +213,7 @@ jobs:
 
   deploy-vps1-method2:
     needs: [load-config, deploy-vps2-method2]
-    if: ${{ github.event.inputs.method == 'method-2' }}
+    if: ${{ github.event.inputs.method == 'method-2' && github.event.inputs.action == 'deploy' }}
     runs-on: ubuntu-latest
     outputs:
       vps1_wg0_public_key: ${{ steps.get-keys.outputs.wg0_public_key }}
@@ -262,7 +270,7 @@ jobs:
 
   update-vps2-method2:
     needs: [load-config, deploy-vps2-method2, deploy-vps1-method2]
-    if: ${{ github.event.inputs.method == 'method-2' }}
+    if: ${{ github.event.inputs.method == 'method-2' && github.event.inputs.action == 'deploy' }}
     runs-on: ubuntu-latest
     steps:
       - name: Setup SSH Key
@@ -283,11 +291,11 @@ jobs:
           echo "✅ VPS2 updated with VPS1 wg1 public key"
 
   #=============================================================================
-  # RESTART WIREGUARD
+  # START WIREGUARD (chỉ khi action = start-wireguard)
   #=============================================================================
-  restart-wireguard:
-    needs: [load-config, update-vps1-method1, update-vps2-method2]
-    if: ${{ always() && (needs.update-vps1-method1.result == 'success' || needs.update-vps2-method2.result == 'success') }}
+  start-wireguard:
+    needs: load-config
+    if: ${{ github.event.inputs.action == 'start-wireguard' }}
     runs-on: ubuntu-latest
     steps:
       - name: Setup SSH Keys
@@ -324,11 +332,11 @@ jobs:
           fi
 
   #=============================================================================
-  # SUMMARY
+  # SUMMARY (sau khi deploy)
   #=============================================================================
   summary:
-    needs: [load-config, deploy-vps1-method1, deploy-vps2-method1, deploy-vps2-method2, deploy-vps1-method2, restart-wireguard]
-    if: ${{ always() && needs.restart-wireguard.result == 'success' }}
+    needs: [load-config, update-vps1-method1, update-vps2-method2]
+    if: ${{ always() && github.event.inputs.action == 'deploy' && (needs.update-vps1-method1.result == 'success' || needs.update-vps2-method2.result == 'success') }}
     runs-on: ubuntu-latest
     steps:
       - name: Deployment Summary
