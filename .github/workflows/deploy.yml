@@ -11,15 +11,6 @@ on:
         options:
           - method-1
           - method-2
-      target:
-        description: 'Chọn VPS để deploy'
-        required: true
-        default: 'both'
-        type: choice
-        options:
-          - vps1
-          - vps2
-          - both
 
 jobs:
   load-config:
@@ -38,11 +29,8 @@ jobs:
       - name: Load configuration from config.env
         id: config
         run: |
-          # Đọc file config.env và export các biến
           while IFS='=' read -r key value; do
-            # Bỏ qua comment và dòng trống
             if [[ ! "$key" =~ ^# ]] && [[ -n "$key" ]]; then
-              # Loại bỏ dấu ngoặc kép
               value=$(echo "$value" | tr -d '"')
               echo "${key}=${value}" >> $GITHUB_OUTPUT
             fi
@@ -50,8 +38,9 @@ jobs:
 
   deploy-vps1:
     needs: load-config
-    if: ${{ github.event.inputs.target == 'vps1' || github.event.inputs.target == 'both' }}
     runs-on: ubuntu-latest
+    outputs:
+      vps1_public_key: ${{ steps.get-key.outputs.public_key }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -71,41 +60,37 @@ jobs:
           METHOD: ${{ github.event.inputs.method }}
         run: |
           echo "🚀 Deploying to VPS1: $VPS1_HOST"
-          echo "📦 Method: $METHOD"
           
-          # Xác định thư mục method
           if [ "$METHOD" == "method-1" ]; then
             METHOD_DIR="method-1-single-tunnel"
           else
             METHOD_DIR="method-2-double-tunnel"
           fi
           
-          # Tạo thư mục trên VPS
+          # Tạo thư mục và copy files
           ssh -p $VPS1_SSH_PORT -o StrictHostKeyChecking=no $VPS1_USER@$VPS1_HOST "mkdir -p /root/sd-wan"
-          
-          # Copy config.env
           scp -P $VPS1_SSH_PORT -o StrictHostKeyChecking=no config.env $VPS1_USER@$VPS1_HOST:/root/sd-wan/
-          
-          # Copy setup script
           scp -P $VPS1_SSH_PORT -o StrictHostKeyChecking=no $METHOD_DIR/vps1/setup.sh $VPS1_USER@$VPS1_HOST:/root/sd-wan/
-          
-          # Copy WireGuard configs nếu có
-          if [ -f "$METHOD_DIR/vps1/wg0.conf" ]; then
-            scp -P $VPS1_SSH_PORT -o StrictHostKeyChecking=no $METHOD_DIR/vps1/wg0.conf $VPS1_USER@$VPS1_HOST:/etc/wireguard/ || true
-          fi
-          if [ -f "$METHOD_DIR/vps1/wg1.conf" ]; then
-            scp -P $VPS1_SSH_PORT -o StrictHostKeyChecking=no $METHOD_DIR/vps1/wg1.conf $VPS1_USER@$VPS1_HOST:/etc/wireguard/ || true
-          fi
           
           # Chạy setup script
           ssh -p $VPS1_SSH_PORT -o StrictHostKeyChecking=no $VPS1_USER@$VPS1_HOST "chmod +x /root/sd-wan/setup.sh && /root/sd-wan/setup.sh"
-          
-          echo "✅ VPS1 deployment completed!"
+
+      - name: Get VPS1 Public Key
+        id: get-key
+        env:
+          VPS1_HOST: ${{ needs.load-config.outputs.vps1_host }}
+          VPS1_USER: ${{ needs.load-config.outputs.vps1_user }}
+          VPS1_SSH_PORT: ${{ needs.load-config.outputs.vps1_ssh_port }}
+        run: |
+          VPS1_PUBLIC_KEY=$(ssh -p $VPS1_SSH_PORT -o StrictHostKeyChecking=no $VPS1_USER@$VPS1_HOST "cat /etc/wireguard/vps1_publickey")
+          echo "public_key=$VPS1_PUBLIC_KEY" >> $GITHUB_OUTPUT
+          echo "✅ VPS1 Public Key: $VPS1_PUBLIC_KEY"
 
   deploy-vps2:
-    needs: load-config
-    if: ${{ github.event.inputs.target == 'vps2' || github.event.inputs.target == 'both' }}
+    needs: [load-config, deploy-vps1]
     runs-on: ubuntu-latest
+    outputs:
+      vps2_public_key: ${{ steps.get-key.outputs.public_key }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -122,50 +107,106 @@ jobs:
           VPS2_HOST: ${{ needs.load-config.outputs.vps2_host }}
           VPS2_USER: ${{ needs.load-config.outputs.vps2_user }}
           VPS2_SSH_PORT: ${{ needs.load-config.outputs.vps2_ssh_port }}
+          VPS1_PUBLIC_KEY: ${{ needs.deploy-vps1.outputs.vps1_public_key }}
           METHOD: ${{ github.event.inputs.method }}
         run: |
           echo "🚀 Deploying to VPS2: $VPS2_HOST"
-          echo "📦 Method: $METHOD"
+          echo "🔑 Using VPS1 Public Key: $VPS1_PUBLIC_KEY"
           
-          # Xác định thư mục method
           if [ "$METHOD" == "method-1" ]; then
             METHOD_DIR="method-1-single-tunnel"
           else
             METHOD_DIR="method-2-double-tunnel"
           fi
           
-          # Tạo thư mục trên VPS
+          # Tạo thư mục và copy files
           ssh -p $VPS2_SSH_PORT -o StrictHostKeyChecking=no $VPS2_USER@$VPS2_HOST "mkdir -p /root/sd-wan"
-          
-          # Copy config.env
           scp -P $VPS2_SSH_PORT -o StrictHostKeyChecking=no config.env $VPS2_USER@$VPS2_HOST:/root/sd-wan/
-          
-          # Copy setup script
           scp -P $VPS2_SSH_PORT -o StrictHostKeyChecking=no $METHOD_DIR/vps2/setup.sh $VPS2_USER@$VPS2_HOST:/root/sd-wan/
           
-          # Copy WireGuard config
-          if [ -f "$METHOD_DIR/vps2/wg0.conf" ]; then
-            scp -P $VPS2_SSH_PORT -o StrictHostKeyChecking=no $METHOD_DIR/vps2/wg0.conf $VPS2_USER@$VPS2_HOST:/etc/wireguard/
-          fi
+          # Chạy setup script với VPS1 public key
+          ssh -p $VPS2_SSH_PORT -o StrictHostKeyChecking=no $VPS2_USER@$VPS2_HOST "chmod +x /root/sd-wan/setup.sh && /root/sd-wan/setup.sh '$VPS1_PUBLIC_KEY'"
+
+      - name: Get VPS2 Public Key
+        id: get-key
+        env:
+          VPS2_HOST: ${{ needs.load-config.outputs.vps2_host }}
+          VPS2_USER: ${{ needs.load-config.outputs.vps2_user }}
+          VPS2_SSH_PORT: ${{ needs.load-config.outputs.vps2_ssh_port }}
+        run: |
+          VPS2_PUBLIC_KEY=$(ssh -p $VPS2_SSH_PORT -o StrictHostKeyChecking=no $VPS2_USER@$VPS2_HOST "cat /etc/wireguard/vps2_publickey")
+          echo "public_key=$VPS2_PUBLIC_KEY" >> $GITHUB_OUTPUT
+          echo "✅ VPS2 Public Key: $VPS2_PUBLIC_KEY"
+
+  update-vps1-with-vps2-key:
+    needs: [load-config, deploy-vps1, deploy-vps2]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS1_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -p ${{ needs.load-config.outputs.vps1_ssh_port }} ${{ needs.load-config.outputs.vps1_host }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Update VPS1 with VPS2 Public Key
+        env:
+          VPS1_HOST: ${{ needs.load-config.outputs.vps1_host }}
+          VPS1_USER: ${{ needs.load-config.outputs.vps1_user }}
+          VPS1_SSH_PORT: ${{ needs.load-config.outputs.vps1_ssh_port }}
+          VPS2_PUBLIC_KEY: ${{ needs.deploy-vps2.outputs.vps2_public_key }}
+        run: |
+          echo "🔄 Updating VPS1 with VPS2 Public Key..."
+          echo "🔑 VPS2 Public Key: $VPS2_PUBLIC_KEY"
           
-          # Chạy setup script
-          ssh -p $VPS2_SSH_PORT -o StrictHostKeyChecking=no $VPS2_USER@$VPS2_HOST "chmod +x /root/sd-wan/setup.sh && /root/sd-wan/setup.sh"
+          # Thay thế <VPS2_PUBLIC_KEY> trong wg0.conf của VPS1
+          ssh -p $VPS1_SSH_PORT -o StrictHostKeyChecking=no $VPS1_USER@$VPS1_HOST "sed -i 's|<VPS2_PUBLIC_KEY>|$VPS2_PUBLIC_KEY|g' /etc/wireguard/wg0.conf"
           
-          echo "✅ VPS2 deployment completed!"
+          echo "✅ VPS1 đã được cập nhật với VPS2 public key"
 
   summary:
-    needs: [deploy-vps1, deploy-vps2]
-    if: always()
+    needs: [load-config, deploy-vps1, deploy-vps2, update-vps1-with-vps2-key]
     runs-on: ubuntu-latest
     steps:
       - name: Deployment Summary
+        env:
+          VPS1_PUBLIC_KEY: ${{ needs.deploy-vps1.outputs.vps1_public_key }}
+          VPS2_PUBLIC_KEY: ${{ needs.deploy-vps2.outputs.vps2_public_key }}
+          VPS1_HOST: ${{ needs.load-config.outputs.vps1_host }}
         run: |
           echo "================================================"
           echo "  📊 DEPLOYMENT SUMMARY"
           echo "================================================"
-          echo "Method: ${{ github.event.inputs.method }}"
-          echo "Target: ${{ github.event.inputs.target }}"
           echo ""
-          echo "VPS1 Status: ${{ needs.deploy-vps1.result }}"
-          echo "VPS2 Status: ${{ needs.deploy-vps2.result }}"
+          echo "✅ VPS1 và VPS2 đã được cấu hình!"
+          echo ""
+          echo "🔑 VPS1 Public Key (dùng cho PC config):"
+          echo "================================================"
+          echo "$VPS1_PUBLIC_KEY"
+          echo "================================================"
+          echo ""
+          echo "📝 Bước tiếp theo cho PC:"
+          echo "  1. Mở WireGuard trên Windows"
+          echo "  2. Add Tunnel → Add empty tunnel"
+          echo "  3. Sử dụng config sau:"
+          echo ""
+          echo "[Interface]"
+          echo "Address = 10.0.0.2/24"
+          echo "PrivateKey = <PC_PRIVATE_KEY>"
+          echo "DNS = 8.8.8.8"
+          echo ""
+          echo "[Peer]"
+          echo "PublicKey = $VPS1_PUBLIC_KEY"
+          echo "Endpoint = $VPS1_HOST:51820"
+          echo "AllowedIPs = 0.0.0.0/0"
+          echo "PersistentKeepalive = 25"
+          echo ""
+          echo "  4. Lấy PC public key và thêm vào VPS1:"
+          echo "     ssh root@$VPS1_HOST"
+          echo "     sed -i 's|<PC_PUBLIC_KEY>|YOUR_PC_PUBLIC_KEY|g' /etc/wireguard/wg0.conf"
+          echo ""
+          echo "  5. Bật WireGuard trên cả 2 VPS:"
+          echo "     VPS1: wg-quick up wg0"
+          echo "     VPS2: wg-quick up wg0"
+          echo ""
           echo "================================================"
