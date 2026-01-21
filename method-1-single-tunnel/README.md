@@ -1,139 +1,154 @@
-# Method 1: Single WireGuard Tunnel + Port Forward
+# Method 1: Single WireGuard Tunnel
 
-## Sơ đồ
+## Mô tả
+
+Tất cả các thiết bị (PC, VPS1, VPS2) đều nằm trong cùng một WireGuard network (10.0.0.0/24).
 
 ```
-┌─────────┐                    ┌─────────────────┐                    ┌─────────────────┐
-│   PC    │   UDP 51820        │      VPS1       │     Port Forward   │      VPS2       │
-│ Client  │ ─────────────────> │  (iptables)     │ ─────────────────> │  (WG Server)    │
-│10.0.0.2 │                    │                 │                    │   10.0.0.1      │
-└─────────┘                    └─────────────────┘                    └─────────────────┘
-                                                                              │
-                                                                              ▼ NAT
-                                                                        Internet (IP X)
+┌─────────────┐      wg0        ┌─────────────────┐      wg0        ┌─────────────────┐
+│     PC      │ ─────────────>  │      VPS1       │ <───────────── │      VPS2       │
+│ (WG Client) │                 │  (WG Server)    │                 │  (WG Client)    │
+│  10.0.0.2   │                 │   10.0.0.1      │                 │   10.0.0.3      │
+└─────────────┘                 └─────────────────┘                 └─────────────────┘
+      │                                 │                                   │
+      │                                 │         forward traffic           │
+      │                                 └──────────────────────────────────>│
+      │                                                                     │
+      └─────────────────────────────────────────────────────────────────────┤
+                                                                            ▼
+                                                                      Internet (IP X)
 ```
 
-## Cách hoạt động
+## Vai trò
 
-1. **PC** gửi WireGuard packets đến **VPS1:51820**
-2. **VPS1** forward tất cả UDP traffic port 51820 đến **VPS2:51820** (DNAT)
-3. **VPS2** nhận và xử lý WireGuard tunnel, sau đó NAT traffic ra Internet
-4. Response đi ngược lại: Internet → VPS2 → VPS1 → PC
+| Thiết bị | Vai trò | IP WireGuard |
+|----------|---------|--------------|
+| VPS1 | WG Server (hub) | 10.0.0.1 |
+| PC | WG Client | 10.0.0.2 |
+| VPS2 | WG Client + NAT Gateway | 10.0.0.3 |
 
-## Ưu điểm
+## Luồng traffic
 
-- ✅ Đơn giản, ít cấu hình
-- ✅ VPS1 không cần cài WireGuard
-- ✅ Tốc độ nhanh (chỉ 1 lớp encryption)
-- ✅ Dễ troubleshoot
+1. **PC → VPS1**: PC kết nối đến VPS1 qua WireGuard
+2. **VPS2 → VPS1**: VPS2 cũng kết nối đến VPS1 như một client
+3. **VPS1 forward**: VPS1 nhận traffic từ PC và forward đến VPS2
+4. **VPS2 NAT**: VPS2 nhận traffic và NAT ra Internet
 
-## Nhược điểm
+## Thứ tự cài đặt
 
-- ❌ Traffic giữa VPS1-VPS2 không được mã hóa (chỉ port forward)
-- ❌ Nếu VPS1-VPS2 trên cùng network thì OK, khác network thì kém bảo mật
+### 1. VPS1 (WireGuard Server)
 
----
-
-## Thứ tự triển khai
-
-1. **VPS2** - Cài WireGuard Server + NAT
-2. **VPS1** - Cấu hình Port Forward
-3. **PC** - Cài WireGuard Client
-
----
-
-## Bước 1: Cấu hình VPS2 (WireGuard Server)
-
-### 1.1 Tạo keys trên VPS2
 ```bash
-cd /etc/wireguard
-wg genkey | tee vps2_privatekey | wg pubkey > vps2_publickey
-cat vps2_privatekey  # Lưu lại
-cat vps2_publickey   # Lưu lại
+# SSH vào VPS1
+ssh root@103.109.187.182
+
+# Copy file wg0.conf vào /etc/wireguard/
+# (Hoặc sử dụng GitHub Actions)
+
+# Chạy setup script
+chmod +x setup.sh
+./setup.sh
+
+# Lưu lại Public Key để cấu hình cho PC và VPS2
 ```
 
-### 1.2 Copy file cấu hình
+### 2. VPS2 (WireGuard Client + NAT)
+
 ```bash
-cp vps2/wg0.conf /etc/wireguard/wg0.conf
+# SSH vào VPS2
+ssh root@103.109.187.179
+
+# Copy file wg0.conf vào /etc/wireguard/
+
+# Cập nhật wg0.conf:
+# - Thay <VPS1_PUBLIC_KEY> bằng public key của VPS1
+# - VPS1_PUBLIC_IP đã được thay tự động từ config.env
+
+# Chạy setup script
+chmod +x setup.sh
+./setup.sh
+
+# Lưu lại Public Key để cấu hình cho VPS1
 ```
 
-### 1.3 Chỉnh sửa config
-Thay thế:
-- `<VPS2_PRIVATE_KEY>` bằng private key vừa tạo
-- `<PC_PUBLIC_KEY>` bằng public key của PC (tạo ở bước 3)
+### 3. Cập nhật VPS1 với VPS2 Public Key
 
-### 1.4 Chạy setup script
 ```bash
-chmod +x vps2/setup.sh
-./vps2/setup.sh
+# SSH vào VPS1
+ssh root@103.109.187.182
+
+# Sửa /etc/wireguard/wg0.conf
+# Thay <VPS2_PUBLIC_KEY> bằng public key của VPS2
+
+# Restart WireGuard
+wg-quick down wg0
+wg-quick up wg0
 ```
 
----
+### 4. PC (Windows)
 
-## Bước 2: Cấu hình VPS1 (Port Forward)
+1. Mở WireGuard for Windows
+2. Click **Add Tunnel** → **Add empty tunnel...**
+3. Copy nội dung từ `pc/wg0.conf`
+4. Thay thế:
+   - `<PC_PRIVATE_KEY>`: Private key đã tự động tạo
+   - `<VPS1_PUBLIC_KEY>`: Public key của VPS1
+   - `VPS1_PUBLIC_IP`: IP của VPS1 (103.109.187.182)
+5. Click **Save** và **Activate**
 
-### 2.1 Chỉnh sửa script
-Mở `vps1/setup.sh` và thay thế:
-- `VPS2_PUBLIC_IP` bằng IP public của VPS2
+### 5. Cập nhật VPS1 với PC Public Key
 
-### 2.2 Chạy setup script
 ```bash
-chmod +x vps1/setup.sh
-./vps1/setup.sh
-```
+# SSH vào VPS1
+ssh root@103.109.187.182
 
----
-
-## Bước 3: Cấu hình PC (Windows)
-
-### 3.1 Cài WireGuard
-Download từ: https://www.wireguard.com/install/
-
-### 3.2 Tạo tunnel mới
-1. Mở WireGuard
-2. Click "Add Tunnel" → "Add empty tunnel..."
-3. Lưu lại **Public key** hiển thị
-4. Paste nội dung từ `pc/wg0.conf`
-
-### 3.3 Chỉnh sửa config
-Thay thế:
-- `<PC_PRIVATE_KEY>` - tự động được tạo khi add tunnel
-- `<VPS2_PUBLIC_KEY>` bằng public key của VPS2
-- `VPS1_PUBLIC_IP` bằng IP public của VPS1
-
-### 3.4 Cập nhật VPS2
-Quay lại VPS2, thêm public key của PC vào config:
-```bash
-nano /etc/wireguard/wg0.conf
+# Sửa /etc/wireguard/wg0.conf
 # Thay <PC_PUBLIC_KEY> bằng public key của PC
-wg-quick down wg0 && wg-quick up wg0
+
+# Restart WireGuard
+wg-quick down wg0
+wg-quick up wg0
 ```
 
----
+## Kiểm tra kết nối
 
-## Kiểm tra
-
-### Trên PC
-```cmd
-ping 10.0.0.1
-curl ifconfig.me
+### Trên VPS1
+```bash
+wg show
+# Phải thấy 2 peers: PC và VPS2
 ```
-Kết quả `curl ifconfig.me` phải trả về IP của VPS2 (IP X)
 
 ### Trên VPS2
 ```bash
 wg show
+# Phải thấy handshake với VPS1
+ping 10.0.0.1  # Ping VPS1
+ping 10.0.0.2  # Ping PC (nếu PC đang connected)
 ```
 
----
+### Trên PC
+```bash
+# Kiểm tra IP public
+curl ifconfig.me
+# Kết quả phải là IP của VPS2 (103.109.187.179)
+
+# Ping test
+ping 10.0.0.1  # Ping VPS1
+ping 10.0.0.3  # Ping VPS2
+```
 
 ## Troubleshooting
 
-### PC không kết nối được
-1. Kiểm tra firewall trên VPS1 cho phép UDP 51820
-2. Kiểm tra port forward đúng chưa: `iptables -t nat -L -n -v`
-3. Kiểm tra WireGuard trên VPS2: `wg show`
+### Không ping được giữa các peers
+1. Kiểm tra firewall trên VPS1 đã mở UDP 51820
+2. Kiểm tra IP forwarding đã bật: `sysctl net.ipv4.ip_forward`
+3. Kiểm tra iptables rules: `iptables -L -n -v`
 
-### Traffic không đi qua VPS2
+### VPS2 không kết nối được VPS1
+1. Kiểm tra Endpoint trong wg0.conf của VPS2
+2. Kiểm tra public key đã đúng chưa
+3. Kiểm tra firewall trên VPS1
+
+### PC không truy cập Internet qua VPN
 1. Kiểm tra NAT trên VPS2: `iptables -t nat -L -n -v`
-2. Kiểm tra IP forwarding: `cat /proc/sys/net/ipv4/ip_forward` (phải = 1)
+2. Kiểm tra AllowedIPs trong cấu hình
