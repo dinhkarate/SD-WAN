@@ -3,6 +3,7 @@
 # VPS1 Setup Script - WireGuard Server (Method 1 - Single Tunnel)
 # Chức năng: WG Server nhận kết nối từ PC và VPS2, forward traffic giữa chúng
 # Script tự động tạo wg0.conf với keys đã điền sẵn
+# Tự động tạo PC key và pc-config.conf
 #===============================================================================
 
 set -e
@@ -17,30 +18,54 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
+# Load config.env để lấy VPS1_HOST
+VPS1_PUBLIC_IP=""
+if [ -f "/root/sd-wan/config.env" ]; then
+    source /root/sd-wan/config.env
+    VPS1_PUBLIC_IP="$VPS1_HOST"
+fi
+
+# Nếu không có trong config.env, lấy IP public tự động
+if [ -z "$VPS1_PUBLIC_IP" ]; then
+    VPS1_PUBLIC_IP=$(curl -s ifconfig.me || curl -s icanhazip.com || echo "VPS1_PUBLIC_IP")
+fi
+
 echo ""
-echo "[1/4] Cài đặt WireGuard..."
+echo "[1/5] Cài đặt WireGuard..."
 apt update
 apt install -y wireguard wireguard-tools iptables
 
 echo ""
-echo "[2/4] Tạo key pair..."
+echo "[2/5] Tạo key pairs (VPS1 + PC)..."
 cd /etc/wireguard
 
+# Tạo VPS1 keys
 if [ ! -f "vps1_privatekey" ]; then
     wg genkey | tee vps1_privatekey | wg pubkey > vps1_publickey
     chmod 600 vps1_privatekey
-    echo "    ✅ Keys đã được tạo"
+    echo "    ✅ VPS1 keys đã được tạo"
 else
-    echo "    ⚠️  Keys đã tồn tại, sử dụng keys hiện có..."
+    echo "    ⚠️  VPS1 keys đã tồn tại, sử dụng keys hiện có..."
+fi
+
+# Tạo PC keys
+if [ ! -f "pc_privatekey" ]; then
+    wg genkey | tee pc_privatekey | wg pubkey > pc_publickey
+    chmod 600 pc_privatekey
+    echo "    ✅ PC keys đã được tạo"
+else
+    echo "    ⚠️  PC keys đã tồn tại, sử dụng keys hiện có..."
 fi
 
 VPS1_PRIVATE_KEY=$(cat /etc/wireguard/vps1_privatekey)
 VPS1_PUBLIC_KEY=$(cat /etc/wireguard/vps1_publickey)
+PC_PRIVATE_KEY=$(cat /etc/wireguard/pc_privatekey)
+PC_PUBLIC_KEY=$(cat /etc/wireguard/pc_publickey)
 
 echo ""
-echo "[3/4] Tạo file wg0.conf..."
+echo "[3/5] Tạo file wg0.conf..."
 
-# Tạo wg0.conf với private key đã điền sẵn
+# Tạo wg0.conf với PC public key đã điền sẵn
 cat > /etc/wireguard/wg0.conf << EOF
 #===============================================================================
 # VPS1 WireGuard Server Configuration (Method 1 - Single Tunnel)
@@ -61,24 +86,49 @@ PostDown = iptables -D FORWARD -i wg0 -o wg0 -j ACCEPT
 # PEER: PC Client
 #===============================================================================
 [Peer]
-# TODO: Thay bằng public key của PC
-PublicKey = <PC_PUBLIC_KEY>
+PublicKey = ${PC_PUBLIC_KEY}
 AllowedIPs = 10.0.0.2/32
 
 #===============================================================================
 # PEER: VPS2 Client (Gateway ra Internet)
 #===============================================================================
 [Peer]
-# TODO: Thay bằng public key của VPS2
+# TODO: Sẽ được workflow tự động thay thế
 PublicKey = <VPS2_PUBLIC_KEY>
-AllowedIPs = 10.0.0.3/32, 0.0.0.0/0
+AllowedIPs = 10.0.0.3/32
 EOF
 
 chmod 600 /etc/wireguard/wg0.conf
-echo "    ✅ wg0.conf đã được tạo"
+echo "    ✅ wg0.conf đã được tạo (đã có PC public key)"
 
 echo ""
-echo "[4/4] Hoàn tất (WireGuard chưa được bật)..."
+echo "[4/5] Tạo file PC config..."
+
+# Tạo pc-config.conf hoàn chỉnh
+mkdir -p /root/sd-wan
+cat > /root/sd-wan/pc-config.conf << EOF
+#===============================================================================
+# PC WireGuard Client Configuration
+# Auto-generated - Import trực tiếp vào WireGuard Windows
+#===============================================================================
+
+[Interface]
+Address = 10.0.0.2/24
+PrivateKey = ${PC_PRIVATE_KEY}
+DNS = 8.8.8.8, 8.8.4.4
+
+[Peer]
+PublicKey = ${VPS1_PUBLIC_KEY}
+Endpoint = ${VPS1_PUBLIC_IP}:51820
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25
+EOF
+
+chmod 600 /root/sd-wan/pc-config.conf
+echo "    ✅ pc-config.conf đã được tạo"
+
+echo ""
+echo "[5/5] Hoàn tất (WireGuard chưa được bật)..."
 
 echo ""
 echo "================================================"
@@ -90,9 +140,14 @@ echo "================================================"
 echo "$VPS1_PUBLIC_KEY"
 echo "================================================"
 echo ""
+echo "📱 PC CONFIG (copy hoặc download file /root/sd-wan/pc-config.conf):"
+echo "================================================"
+cat /root/sd-wan/pc-config.conf
+echo "================================================"
+echo ""
 echo "📝 Các bước tiếp theo:"
-echo "  1. Chờ VPS2 setup xong để lấy VPS2 public key"
-echo "  2. Thay <VPS2_PUBLIC_KEY> trong /etc/wireguard/wg0.conf"
-echo "  3. Thay <PC_PUBLIC_KEY> trong /etc/wireguard/wg0.conf"
-echo "  4. Bật WireGuard: wg-quick up wg0"
+echo "  1. Download PC config: scp root@${VPS1_PUBLIC_IP}:/root/sd-wan/pc-config.conf ."
+echo "  2. Import vào WireGuard Windows"
+echo "  3. Chờ workflow update VPS2 public key"
+echo "  4. Bật WireGuard trên cả 2 VPS: wg-quick up wg0"
 echo ""
