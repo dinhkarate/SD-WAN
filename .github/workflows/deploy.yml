@@ -32,6 +32,7 @@ jobs:
       vps2_ssh_port: ${{ steps.config.outputs.VPS2_SSH_PORT }}
       wg_port: ${{ steps.config.outputs.WG_PORT }}
       wg_port_vps2: ${{ steps.config.outputs.WG_PORT_VPS2 }}
+      pc_public_key: ${{ steps.config.outputs.PC_PUBLIC_KEY }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -229,14 +230,20 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -p ${{ needs.load-config.outputs.vps1_ssh_port }} ${{ needs.load-config.outputs.vps1_host }} >> ~/.ssh/known_hosts 2>/dev/null || true
 
-      - name: Prepare VPS1 wg1.conf with VPS2 info
+      - name: Prepare VPS1 configs with VPS2 info and PC Public Key
         env:
           VPS2_HOST: ${{ needs.load-config.outputs.vps2_host }}
           VPS2_PUBLIC_KEY: ${{ needs.deploy-vps2-method2.outputs.vps2_public_key }}
+          PC_PUBLIC_KEY: ${{ needs.load-config.outputs.pc_public_key }}
         run: |
+          # Update wg1.conf with VPS2 info
           sed -i "s|VPS2_PUBLIC_IP|$VPS2_HOST|g" method-2-double-tunnel/vps1/wg1.conf
           sed -i "s|<VPS2_PUBLIC_KEY>|$VPS2_PUBLIC_KEY|g" method-2-double-tunnel/vps1/wg1.conf
           echo "✅ Updated wg1.conf with VPS2 IP: $VPS2_HOST and Key: $VPS2_PUBLIC_KEY"
+          
+          # Update wg0.conf with PC Public Key
+          sed -i "s|<PC_PUBLIC_KEY>|$PC_PUBLIC_KEY|g" method-2-double-tunnel/vps1/wg0.conf
+          echo "✅ Updated wg0.conf with PC Public Key: $PC_PUBLIC_KEY"
 
       - name: Deploy to VPS1 (wg0 + wg1)
         env:
@@ -289,6 +296,94 @@ jobs:
         run: |
           ssh -p $VPS2_SSH_PORT -o StrictHostKeyChecking=no $VPS2_USER@$VPS2_HOST "sed -i 's|<VPS1_WG1_PUBLIC_KEY>|$VPS1_WG1_KEY|g' /etc/wireguard/wg1.conf"
           echo "✅ VPS2 updated with VPS1 wg1 public key"
+
+  #=============================================================================
+  # RESTART AFTER DEPLOY - Method 2
+  #=============================================================================
+  restart-after-deploy-method2:
+    needs: [load-config, update-vps2-method2]
+    if: ${{ github.event.inputs.method == 'method-2' && github.event.inputs.action == 'deploy' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup SSH Keys
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS1_SSH_KEY }}" > ~/.ssh/vps1_key
+          echo "${{ secrets.VPS2_SSH_KEY }}" > ~/.ssh/vps2_key
+          chmod 600 ~/.ssh/vps1_key ~/.ssh/vps2_key
+          ssh-keyscan -p ${{ needs.load-config.outputs.vps1_ssh_port }} ${{ needs.load-config.outputs.vps1_host }} >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh-keyscan -p ${{ needs.load-config.outputs.vps2_ssh_port }} ${{ needs.load-config.outputs.vps2_host }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Restart WireGuard on VPS2
+        env:
+          VPS2_HOST: ${{ needs.load-config.outputs.vps2_host }}
+          VPS2_USER: ${{ needs.load-config.outputs.vps2_user }}
+          VPS2_SSH_PORT: ${{ needs.load-config.outputs.vps2_ssh_port }}
+        run: |
+          echo "🔄 Restarting WireGuard on VPS2..."
+          ssh -i ~/.ssh/vps2_key -p $VPS2_SSH_PORT -o StrictHostKeyChecking=no $VPS2_USER@$VPS2_HOST "wg-quick down wg1 2>/dev/null || true && wg-quick up wg1"
+          echo "✅ VPS2 WireGuard (wg1) restarted"
+
+      - name: Restart WireGuard on VPS1 (wg1 first, then wg0)
+        env:
+          VPS1_HOST: ${{ needs.load-config.outputs.vps1_host }}
+          VPS1_USER: ${{ needs.load-config.outputs.vps1_user }}
+          VPS1_SSH_PORT: ${{ needs.load-config.outputs.vps1_ssh_port }}
+        run: |
+          echo "🔄 Restarting WireGuard on VPS1..."
+          # QUAN TRỌNG: Start wg1 TRƯỚC (tạo table 51821), sau đó wg0 (tạo ip rule)
+          ssh -i ~/.ssh/vps1_key -p $VPS1_SSH_PORT -o StrictHostKeyChecking=no $VPS1_USER@$VPS1_HOST "wg-quick down wg1 2>/dev/null || true && wg-quick down wg0 2>/dev/null || true && wg-quick up wg1 && wg-quick up wg0"
+          echo "✅ VPS1 WireGuard (wg1 + wg0) restarted"
+
+  #=============================================================================
+  # CHECK STATUS AFTER DEPLOY - Method 2
+  #=============================================================================
+  check-status-after-deploy-method2:
+    needs: [load-config, restart-after-deploy-method2]
+    if: ${{ github.event.inputs.method == 'method-2' && github.event.inputs.action == 'deploy' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup SSH Keys
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS1_SSH_KEY }}" > ~/.ssh/vps1_key
+          echo "${{ secrets.VPS2_SSH_KEY }}" > ~/.ssh/vps2_key
+          chmod 600 ~/.ssh/vps1_key ~/.ssh/vps2_key
+          ssh-keyscan -p ${{ needs.load-config.outputs.vps1_ssh_port }} ${{ needs.load-config.outputs.vps1_host }} >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh-keyscan -p ${{ needs.load-config.outputs.vps2_ssh_port }} ${{ needs.load-config.outputs.vps2_host }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Check VPS1 Status
+        env:
+          VPS1_HOST: ${{ needs.load-config.outputs.vps1_host }}
+          VPS1_USER: ${{ needs.load-config.outputs.vps1_user }}
+          VPS1_SSH_PORT: ${{ needs.load-config.outputs.vps1_ssh_port }}
+        run: |
+          echo "================================================"
+          echo "  📊 VPS1 WireGuard Status"
+          echo "================================================"
+          ssh -i ~/.ssh/vps1_key -p $VPS1_SSH_PORT -o StrictHostKeyChecking=no $VPS1_USER@$VPS1_HOST "echo '--- wg0 (Server cho PC) ---' && wg show wg0 && echo '' && echo '--- wg1 (Client đến VPS2) ---' && wg show wg1 && echo '' && echo '--- Routing Table 51821 ---' && ip route show table 51821"
+
+      - name: Check VPS2 Status
+        env:
+          VPS2_HOST: ${{ needs.load-config.outputs.vps2_host }}
+          VPS2_USER: ${{ needs.load-config.outputs.vps2_user }}
+          VPS2_SSH_PORT: ${{ needs.load-config.outputs.vps2_ssh_port }}
+        run: |
+          echo "================================================"
+          echo "  📊 VPS2 WireGuard Status"
+          echo "================================================"
+          ssh -i ~/.ssh/vps2_key -p $VPS2_SSH_PORT -o StrictHostKeyChecking=no $VPS2_USER@$VPS2_HOST "wg show wg1"
+
+      - name: Test Connectivity VPS1 to VPS2
+        env:
+          VPS1_HOST: ${{ needs.load-config.outputs.vps1_host }}
+          VPS1_USER: ${{ needs.load-config.outputs.vps1_user }}
+          VPS1_SSH_PORT: ${{ needs.load-config.outputs.vps1_ssh_port }}
+        run: |
+          echo "================================================"
+          echo "  🔗 Testing VPS1 → VPS2 Connectivity"
+          echo "================================================"
+          ssh -i ~/.ssh/vps1_key -p $VPS1_SSH_PORT -o StrictHostKeyChecking=no $VPS1_USER@$VPS1_HOST "ping -c 3 10.0.1.1 && echo '✅ VPS1 can reach VPS2 via WireGuard tunnel' || echo '❌ VPS1 cannot reach VPS2'"
 
   #=============================================================================
   # START WIREGUARD (chỉ khi action = start-wireguard)
@@ -383,10 +478,24 @@ jobs:
           echo "PersistentKeepalive = 25"
           echo "================================================================"
           echo ""
-          echo "📋 Bước tiếp theo:"
-          echo "  1. Copy config trên vào WireGuard PC"
-          echo "  2. Lưu PC public key"
-          echo "  3. SSH vào VPS1 thêm PC key:"
-          echo "     sed -i 's|<PC_PUBLIC_KEY>|YOUR_KEY|g' /etc/wireguard/wg0.conf"
-          echo "     wg-quick down wg0 && wg-quick up wg0"
+          if [ "$METHOD" == "method-2" ]; then
+            echo "================================================================"
+            echo "  ✅ PC PUBLIC KEY ĐÃ ĐƯỢC TỰ ĐỘNG CẤU HÌNH!"
+            echo "================================================================"
+            echo ""
+            echo "PC Public Key từ config.env đã được tự động thay vào VPS1."
+            echo "Bạn chỉ cần bật WireGuard trên PC và test kết nối!"
+            echo ""
+            echo "📋 TEST KẾT NỐI:"
+            echo "   ping 10.0.0.1     (VPS1)"
+            echo "   ping 10.0.1.1     (VPS2)"
+            echo "   curl ifconfig.me  (phải trả về IP của VPS2: $VPS2_HOST)"
+          else
+            echo "📋 Bước tiếp theo:"
+            echo "  1. Copy config trên vào WireGuard PC"
+            echo "  2. Lưu PC public key"
+            echo "  3. SSH vào VPS1 thêm PC key:"
+            echo "     sed -i 's|<PC_PUBLIC_KEY>|YOUR_KEY|g' /etc/wireguard/wg0.conf"
+            echo "     wg-quick down wg0 && wg-quick up wg0"
+          fi
           echo ""
