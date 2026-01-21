@@ -42,10 +42,10 @@ echo "================================================"
 echo ""
 
 echo "[3/5] Kiểm tra file cấu hình WireGuard..."
-echo "    (IP Forwarding sẽ được bật tự động qua PostUp trong wg0.conf)"
-if [ ! -f "/etc/wireguard/wg0.conf" ]; then
-    echo "    ⚠️  Chưa có file wg0.conf!"
-    echo "    → Copy file wg0.conf vào /etc/wireguard/"
+echo "    (IP Forwarding sẽ được bật tự động qua PostUp trong wg1.conf)"
+if [ ! -f "/etc/wireguard/wg1.conf" ]; then
+    echo "    ⚠️  Chưa có file wg1.conf!"
+    echo "    → Copy file wg1.conf vào /etc/wireguard/"
     echo "    → Sau đó chạy lại script này"
     exit 1
 fi
@@ -53,12 +53,12 @@ fi
 echo ""
 echo "[4/5] Thay thế Private Key trong config..."
 PRIVATE_KEY=$(cat /etc/wireguard/vps2_privatekey)
-sed -i "s|<VPS2_PRIVATE_KEY>|$PRIVATE_KEY|g" /etc/wireguard/wg0.conf
+sed -i "s|<VPS2_PRIVATE_KEY>|$PRIVATE_KEY|g" /etc/wireguard/wg1.conf
 
 echo ""
 echo "[5/5] Enable WireGuard auto-start (nhưng KHÔNG khởi động ngay)..."
 # Chỉ enable, KHÔNG start - để tránh mất kết nối SSH
-systemctl enable wg-quick@wg0 2>/dev/null || true
+systemctl enable wg-quick@wg1 2>/dev/null || true
 echo "    ✅ WireGuard đã được enable auto-start"
 
 # Mở UDP port cho WireGuard
@@ -72,7 +72,7 @@ echo ""
 echo "⚠️  QUAN TRỌNG: WireGuard CHƯA được khởi động!"
 echo ""
 echo "Để khởi động WireGuard thủ công, chạy:"
-echo "  wg-quick up wg0"
+echo "  wg-quick up wg1"
 echo ""
 echo "Hoặc restart server để auto-start."
 echo ""

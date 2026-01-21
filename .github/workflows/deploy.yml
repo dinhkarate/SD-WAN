@@ -196,7 +196,7 @@ jobs:
           ssh -p $VPS2_SSH_PORT -o StrictHostKeyChecking=no $VPS2_USER@$VPS2_HOST "mkdir -p /root/sd-wan"
           scp -P $VPS2_SSH_PORT -o StrictHostKeyChecking=no config.env $VPS2_USER@$VPS2_HOST:/root/sd-wan/
           scp -P $VPS2_SSH_PORT -o StrictHostKeyChecking=no method-2-double-tunnel/vps2/setup.sh $VPS2_USER@$VPS2_HOST:/root/sd-wan/
-          scp -P $VPS2_SSH_PORT -o StrictHostKeyChecking=no method-2-double-tunnel/vps2/wg0.conf $VPS2_USER@$VPS2_HOST:/etc/wireguard/wg0.conf
+          scp -P $VPS2_SSH_PORT -o StrictHostKeyChecking=no method-2-double-tunnel/vps2/wg1.conf $VPS2_USER@$VPS2_HOST:/etc/wireguard/wg1.conf
           
           ssh -p $VPS2_SSH_PORT -o StrictHostKeyChecking=no $VPS2_USER@$VPS2_HOST "chmod +x /root/sd-wan/setup.sh && /root/sd-wan/setup.sh"
 
@@ -287,7 +287,7 @@ jobs:
           VPS2_SSH_PORT: ${{ needs.load-config.outputs.vps2_ssh_port }}
           VPS1_WG1_KEY: ${{ needs.deploy-vps1-method2.outputs.vps1_wg1_public_key }}
         run: |
-          ssh -p $VPS2_SSH_PORT -o StrictHostKeyChecking=no $VPS2_USER@$VPS2_HOST "sed -i 's|<VPS1_WG1_PUBLIC_KEY>|$VPS1_WG1_KEY|g' /etc/wireguard/wg0.conf"
+          ssh -p $VPS2_SSH_PORT -o StrictHostKeyChecking=no $VPS2_USER@$VPS2_HOST "sed -i 's|<VPS1_WG1_PUBLIC_KEY>|$VPS1_WG1_KEY|g' /etc/wireguard/wg1.conf"
           echo "✅ VPS2 updated with VPS1 wg1 public key"
 
   #=============================================================================
@@ -312,9 +312,15 @@ jobs:
           VPS2_HOST: ${{ needs.load-config.outputs.vps2_host }}
           VPS2_USER: ${{ needs.load-config.outputs.vps2_user }}
           VPS2_SSH_PORT: ${{ needs.load-config.outputs.vps2_ssh_port }}
+          METHOD: ${{ github.event.inputs.method }}
         run: |
-          ssh -i ~/.ssh/vps2_key -p $VPS2_SSH_PORT -o StrictHostKeyChecking=no $VPS2_USER@$VPS2_HOST "wg-quick down wg0 2>/dev/null || true && wg-quick up wg0"
-          echo "✅ VPS2 WireGuard restarted"
+          if [ "$METHOD" == "method-2" ]; then
+            ssh -i ~/.ssh/vps2_key -p $VPS2_SSH_PORT -o StrictHostKeyChecking=no $VPS2_USER@$VPS2_HOST "wg-quick down wg1 2>/dev/null || true && wg-quick up wg1"
+            echo "✅ VPS2 WireGuard (wg1) restarted"
+          else
+            ssh -i ~/.ssh/vps2_key -p $VPS2_SSH_PORT -o StrictHostKeyChecking=no $VPS2_USER@$VPS2_HOST "wg-quick down wg0 2>/dev/null || true && wg-quick up wg0"
+            echo "✅ VPS2 WireGuard (wg0) restarted"
+          fi
 
       - name: Restart WireGuard on VPS1
         env:
