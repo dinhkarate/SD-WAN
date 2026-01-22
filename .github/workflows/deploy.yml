@@ -204,8 +204,17 @@ jobs:
           VPS1_SSH_PORT: ${{ needs.load-config.outputs.vps1_ssh_port }}
         run: |
           echo "🔄 Restarting WireGuard on VPS1..."
-          # QUAN TRỌNG: Start wg1 TRƯỚC (tạo table 51821), sau đó wg0 (tạo ip rule)
-          ssh -i ~/.ssh/vps1_key -p $VPS1_SSH_PORT -o StrictHostKeyChecking=no $VPS1_USER@$VPS1_HOST "wg-quick down wg1 2>/dev/null || true && wg-quick down wg0 2>/dev/null || true && wg-quick up wg1 && wg-quick up wg0"
+          # QUAN TRỌNG: 
+          # 1. Stop interfaces trước
+          # 2. Xóa ip rule cũ (tránh lỗi "File exists")
+          # 3. Start wg1 TRƯỚC (tạo table 51821), sau đó wg0 (tạo ip rule)
+          ssh -i ~/.ssh/vps1_key -p $VPS1_SSH_PORT -o StrictHostKeyChecking=no $VPS1_USER@$VPS1_HOST "
+            wg-quick down wg0 2>/dev/null || true
+            wg-quick down wg1 2>/dev/null || true
+            ip rule del from 10.0.0.0/24 lookup 51821 2>/dev/null || true
+            wg-quick up wg1
+            wg-quick up wg0
+          "
           echo "✅ VPS1 WireGuard (wg1 + wg0) restarted"
 
   #=============================================================================
@@ -290,8 +299,14 @@ jobs:
           VPS1_USER: ${{ needs.load-config.outputs.vps1_user }}
           VPS1_SSH_PORT: ${{ needs.load-config.outputs.vps1_ssh_port }}
         run: |
-          ssh -i ~/.ssh/vps1_key -p $VPS1_SSH_PORT -o StrictHostKeyChecking=no $VPS1_USER@$VPS1_HOST "wg-quick down wg0 2>/dev/null || true && wg-quick up wg0 && wg-quick down wg1 2>/dev/null || true && wg-quick up wg1"
-          echo "✅ VPS1 WireGuard (wg0 + wg1) restarted"
+          ssh -i ~/.ssh/vps1_key -p $VPS1_SSH_PORT -o StrictHostKeyChecking=no $VPS1_USER@$VPS1_HOST "
+            wg-quick down wg0 2>/dev/null || true
+            wg-quick down wg1 2>/dev/null || true
+            ip rule del from 10.0.0.0/24 lookup 51821 2>/dev/null || true
+            wg-quick up wg1
+            wg-quick up wg0
+          "
+          echo "✅ VPS1 WireGuard (wg1 + wg0) restarted"
 
   #=============================================================================
   # SUMMARY (sau khi deploy)
