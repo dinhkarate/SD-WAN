@@ -24,13 +24,13 @@ Traffic từ PC sẽ đi qua VPS1, sau đó đến VPS2, và xuất ra Internet 
 ### Method 1: Single Tunnel (1 WireGuard Network)
 ```
 ┌─────────────┐      wg0        ┌─────────────────┐      wg0        ┌─────────────────┐
-│     PC      │ ─────────────>  │      VPS1       │ <───────────── │      VPS2       │
+│     PC      │ ─────────────>  │      VPS1       │ ───────────────>│      VPS2       │
 │ (WG Client) │                 │  (WG Server)    │                 │  (WG Client)    │
 │  10.0.0.2   │                 │   10.0.0.1      │                 │   10.0.0.3      │
 └─────────────┘                 └─────────────────┘                 └─────────────────┘
-                                        │                                   │
-                                        │         forward traffic           │
-                                        └──────────────────────────────────>│
+                                                                           │
+                                                         forward traffic   │
+                                                                           │
                                                                             ▼
                                                                       Internet (IP X)
 ```
