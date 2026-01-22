@@ -129,7 +129,7 @@ Vào **Settings → Secrets and variables → Actions → New repository secret*
 
 ##### 📌 Method 1: Deploy SD-WAN to VPS
 1. Vào tab **Actions** trên GitHub
-2. Chọn **Deploy SD-WAN to VPS**
+2. Chọn **Deploy SD-WAN to VPS** va chon **Branch method-1-stable**
 3. Click **Run workflow**
 4. Chọn **Method**: `method-1`
 5. Click **Run workflow** để bắt đầu
@@ -138,7 +138,7 @@ Vào **Settings → Secrets and variables → Actions → New repository secret*
 Workflow riêng cho Method 2 với chain WireGuard hoàn chỉnh:
 
 1. Vào tab **Actions** trên GitHub
-2. Chọn **Deploy SD-WAN Method 2 (Double Tunnel)**
+2. Chọn **Deploy SD-WAN Method 2 (Double Tunnel)** va chon **Branch method-2-stable**
 3. Click **Run workflow**
 4. Chọn **Action**:
    - `deploy-all`: Deploy toàn bộ (VPS2 → VPS1 → Exchange keys → Restart)
