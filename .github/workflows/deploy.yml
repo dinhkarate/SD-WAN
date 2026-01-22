@@ -10,7 +10,6 @@ on:
         type: choice
         options:
           - method-1
-          - method-2
 
 jobs:
   load-config:
