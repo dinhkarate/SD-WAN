@@ -42,10 +42,10 @@ echo "================================================"
 echo ""
 
 echo "[3/5] Kiểm tra file cấu hình WireGuard..."
-echo "    (IP Forwarding sẽ được bật tự động qua PostUp trong wg0.conf)"
-if [ ! -f "/etc/wireguard/wg0.conf" ]; then
-    echo "    ⚠️  Chưa có file wg0.conf!"
-    echo "    → Copy file wg0.conf vào /etc/wireguard/"
+echo "    (IP Forwarding sẽ được bật tự động qua PostUp trong wg1.conf)"
+if [ ! -f "/etc/wireguard/wg1.conf" ]; then
+    echo "    ⚠️  Chưa có file wg1.conf!"
+    echo "    → Copy file wg1.conf vào /etc/wireguard/"
     echo "    → Sau đó chạy lại script này"
     exit 1
 fi
@@ -53,28 +53,28 @@ fi
 echo ""
 echo "[4/5] Thay thế Private Key trong config..."
 PRIVATE_KEY=$(cat /etc/wireguard/vps2_privatekey)
-sed -i "s|<VPS2_PRIVATE_KEY>|$PRIVATE_KEY|g" /etc/wireguard/wg0.conf
+sed -i "s|<VPS2_PRIVATE_KEY>|$PRIVATE_KEY|g" /etc/wireguard/wg1.conf
 
 echo ""
-echo "[5/5] Khởi động WireGuard..."
-# Dừng nếu đang chạy
-wg-quick down wg0 2>/dev/null || true
+echo "[5/5] Enable WireGuard auto-start (nhưng KHÔNG khởi động ngay)..."
+# Chỉ enable, KHÔNG start - để tránh mất kết nối SSH
+systemctl enable wg-quick@wg1 2>/dev/null || true
+echo "    ✅ WireGuard đã được enable auto-start"
 
-# Khởi động
-wg-quick up wg0
-
-# Enable auto-start
-systemctl enable wg-quick@wg0
+# Mở UDP port cho WireGuard
+iptables -A INPUT -p udp --dport 51821 -j ACCEPT 2>/dev/null || true
 
 echo ""
 echo "================================================"
 echo "  ✅ VPS2 WireGuard Server đã được cấu hình!"
 echo "================================================"
 echo ""
-echo "Trạng thái WireGuard:"
-wg show
+echo "⚠️  QUAN TRỌNG: WireGuard CHƯA được khởi động!"
 echo ""
-echo "Lưu ý:"
-echo "  1. Đảm bảo đã thay <VPS1_WG1_PUBLIC_KEY> trong wg0.conf"
-echo "  2. Firewall cần mở UDP port 51821"
+echo "Để khởi động WireGuard thủ công, chạy:"
+echo "  wg-quick up wg1"
+echo ""
+echo "Hoặc restart server để auto-start."
+echo ""
+echo "🔑 Public Key: $(cat /etc/wireguard/vps2_publickey)"
 echo ""

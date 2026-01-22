@@ -1,5 +1,28 @@
 # Method 1: Single WireGuard Tunnel
 
+## ⚠️ Tính năng mới: Policy Routing (Table)
+
+Cấu hình này sử dụng **Table routing** để tránh mất kết nối SSH đến VPS1:
+
+- **Table 51820**: Dành riêng cho traffic từ PC → đi qua VPS2 → Internet
+- **Table main**: Traffic của VPS1 (SSH, updates) → đi trực tiếp Internet
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                           VPS1                                    │
+├──────────────────────────────────────────────────────────────────┤
+│  Table MAIN (mặc định):                                          │
+│  ├── default via x.x.x.1 dev eth0  ← SSH, traffic VPS1           │
+│  └── 10.0.0.0/24 dev wg0                                         │
+│                                                                   │
+│  Table 51820 (riêng cho traffic từ PC):                          │
+│  └── default via 10.0.0.3 dev wg0  ← đi qua VPS2 ra Internet     │
+├──────────────────────────────────────────────────────────────────┤
+│  IP Rule: from 10.0.0.2 lookup 51820                             │
+│  → CHỈ traffic từ PC (10.0.0.2) mới dùng table 51820             │
+└──────────────────────────────────────────────────────────────────┘
+```
+
 ## Mô tả
 
 Tất cả các thiết bị (PC, VPS1, VPS2) đều nằm trong cùng một WireGuard network (10.0.0.0/24).
@@ -152,3 +175,23 @@ ping 10.0.0.3  # Ping VPS2
 ### PC không truy cập Internet qua VPN
 1. Kiểm tra NAT trên VPS2: `iptables -t nat -L -n -v`
 2. Kiểm tra AllowedIPs trong cấu hình
+
+### Kiểm tra Table Routing (VPS1)
+
+```bash
+# Xem routing table 51820
+ip route show table 51820
+# Phải có: default dev wg0 ...
+
+# Xem ip rules
+ip rule show
+# Phải có: from 10.0.0.2 lookup 51820
+
+# Nếu thiếu rule, thêm thủ công:
+ip rule add from 10.0.0.2 lookup 51820 priority 100
+```
+
+### VPS1 mất SSH sau khi bật WireGuard
+Điều này xảy ra nếu không dùng Table routing. Giải pháp:
+1. Đảm bảo `Table = 51820` có trong [Interface] của wg0.conf
+2. Đảm bảo có `ip rule add from 10.0.0.2 lookup 51820` trong PostUp

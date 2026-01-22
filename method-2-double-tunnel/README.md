@@ -1,5 +1,28 @@
 # Method 2: Double WireGuard Tunnels
 
+## ⚠️ Policy Routing (Table 51821)
+
+Cấu hình này sử dụng **Table routing** để tránh mất kết nối SSH đến VPS1:
+
+- **Table 51821**: Dành riêng cho traffic từ PC → đi qua wg1 → VPS2 → Internet
+- **Table main**: Traffic của VPS1 (SSH, updates) → đi trực tiếp Internet
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                           VPS1                                    │
+├──────────────────────────────────────────────────────────────────┤
+│  Table MAIN (mặc định):                                          │
+│  ├── default via x.x.x.1 dev eth0  ← SSH, traffic VPS1           │
+│  └── 10.0.0.0/24 dev wg0                                         │
+│                                                                   │
+│  Table 51821 (riêng cho traffic từ PC):                          │
+│  └── default via 10.0.1.1 dev wg1  ← đi qua VPS2 ra Internet     │
+├──────────────────────────────────────────────────────────────────┤
+│  IP Rule: from 10.0.0.0/24 lookup 51821                          │
+│  → CHỈ traffic từ PC (10.0.0.x) mới dùng table 51821             │
+└──────────────────────────────────────────────────────────────────┘
+```
+
 ## Sơ đồ
 
 ```
@@ -193,3 +216,23 @@ wg show
 1. Kiểm tra routing trên VPS1: `ip route`
 2. Kiểm tra NAT trên VPS2: `iptables -t nat -L -n -v`
 3. Kiểm tra IP forwarding trên cả VPS1 và VPS2
+
+### Kiểm tra Table Routing (VPS1)
+
+```bash
+# Xem routing table 51821 (wg1)
+ip route show table 51821
+# Phải có: default dev wg1 ...
+
+# Xem ip rules
+ip rule show
+# Phải có: from 10.0.0.0/24 lookup 51821
+
+# Nếu thiếu rule, thêm thủ công:
+ip rule add from 10.0.0.0/24 lookup 51821 priority 100
+```
+
+### VPS1 mất SSH sau khi bật WireGuard
+Điều này xảy ra nếu không dùng Table routing. Giải pháp:
+1. Đảm bảo `Table = 51821` có trong [Interface] của wg1.conf
+2. Đảm bảo có `ip rule add from 10.0.0.0/24 lookup 51821` trong PostUp của wg0.conf
