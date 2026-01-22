@@ -11,6 +11,7 @@ on:
         options:
           - deploy
           - start-wireguard
+          - cleanup
 
 jobs:
   load-config:
@@ -354,4 +355,53 @@ jobs:
           echo "   ping 10.0.0.1     (VPS1)"
           echo "   ping 10.0.1.1     (VPS2)"
           echo "   curl ifconfig.me  (phải trả về IP của VPS2: $VPS2_HOST)"
+          echo ""
+
+  #=============================================================================
+  # CLEANUP (xóa sạch config cũ trước khi deploy lại)
+  #=============================================================================
+  cleanup:
+    needs: load-config
+    if: ${{ github.event.inputs.action == 'cleanup' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup SSH Keys
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS1_SSH_KEY }}" > ~/.ssh/vps1_key
+          echo "${{ secrets.VPS2_SSH_KEY }}" > ~/.ssh/vps2_key
+          chmod 600 ~/.ssh/vps1_key ~/.ssh/vps2_key
+          ssh-keyscan -p ${{ needs.load-config.outputs.vps1_ssh_port }} ${{ needs.load-config.outputs.vps1_host }} >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh-keyscan -p ${{ needs.load-config.outputs.vps2_ssh_port }} ${{ needs.load-config.outputs.vps2_host }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Cleanup VPS1
+        env:
+          VPS1_HOST: ${{ needs.load-config.outputs.vps1_host }}
+          VPS1_USER: ${{ needs.load-config.outputs.vps1_user }}
+          VPS1_SSH_PORT: ${{ needs.load-config.outputs.vps1_ssh_port }}
+        run: |
+          echo "🧹 Cleaning up VPS1..."
+          scp -P $VPS1_SSH_PORT -o StrictHostKeyChecking=no -i ~/.ssh/vps1_key cleanup-vps.sh $VPS1_USER@$VPS1_HOST:/root/
+          ssh -i ~/.ssh/vps1_key -p $VPS1_SSH_PORT -o StrictHostKeyChecking=no $VPS1_USER@$VPS1_HOST "chmod +x /root/cleanup-vps.sh && /root/cleanup-vps.sh"
+
+      - name: Cleanup VPS2
+        env:
+          VPS2_HOST: ${{ needs.load-config.outputs.vps2_host }}
+          VPS2_USER: ${{ needs.load-config.outputs.vps2_user }}
+          VPS2_SSH_PORT: ${{ needs.load-config.outputs.vps2_ssh_port }}
+        run: |
+          echo "🧹 Cleaning up VPS2..."
+          scp -P $VPS2_SSH_PORT -o StrictHostKeyChecking=no -i ~/.ssh/vps2_key cleanup-vps.sh $VPS2_USER@$VPS2_HOST:/root/
+          ssh -i ~/.ssh/vps2_key -p $VPS2_SSH_PORT -o StrictHostKeyChecking=no $VPS2_USER@$VPS2_HOST "chmod +x /root/cleanup-vps.sh && /root/cleanup-vps.sh"
+
+      - name: Cleanup Summary
+        run: |
+          echo "================================================"
+          echo "  ✅ CLEANUP COMPLETE"
+          echo "================================================"
+          echo ""
+          echo "Both VPS have been cleaned. You can now run 'deploy' action."
           echo ""
