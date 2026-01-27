@@ -211,6 +211,58 @@ $ ssh vina7 "ipset test special_ips 8.8.8.8"
 - Plain text (1 IP per line)
 - JSON array/object
 
+### 5.3 Test Dynamic Feature
+
+**Mục tiêu:** Xác minh tính năng thêm IP động khi hệ thống đang chạy.
+
+**Quy trình test:**
+
+1. Chọn IP không trong list: `142.250.204.14` (Google)
+2. Verify IP chưa có trong ipset:
+
+   ```bash
+   $ ipset test special_ips 142.250.204.14
+   142.250.204.14 is NOT in set special_ips.
+   ```
+
+3. Thêm IP động vào file và reload:
+
+   ```bash
+   $ echo '142.250.204.14/32' >> /etc/sdwan/special-ips.json
+   $ /etc/sdwan/scripts/load-special-ips.sh
+   [Tue Jan 27 10:36:13 PM +07 2026] Loading special IPs...
+   [Tue Jan 27 10:36:26 PM +07 2026] Loaded 3517 special IP entries.
+   ```
+
+4. Verify IP đã được thêm:
+
+   ```bash
+   $ ipset test special_ips 142.250.204.14
+   Warning: 142.250.204.14 is in set special_ips.
+   ```
+
+5. Test traceroute sau khi thêm:
+   ```bash
+   $ traceroute 142.250.204.14
+   traceroute to 142.250.204.14 (142.250.204.14), 6 hops max
+     1   10.10.0.1       24.059ms   # WG1
+     2   103.109.187.1   30.555ms   # VPS1 Gateway (TRỰC TIẾP - không qua WG2!)
+     3   172.28.37.29    34.830ms   # Internet
+     4   115.165.164.54  36.877ms
+     5   203.205.56.160  79.649ms
+     6   72.14.204.140   79.275ms
+   ```
+
+**Kết quả:**
+
+| Metric           | Before            | After                  | Status |
+| ---------------- | ----------------- | ---------------------- | ------ |
+| IP trong ipset   | ❌ NOT in set     | ✅ is in set           | ✅     |
+| Total entries    | 3516              | 3517 (+1)              | ✅     |
+| Hop 2 traceroute | `10.20.0.2` (WG2) | `103.109.187.1` (VPS1) | ✅     |
+
+**Kết luận:** ✅ **PASS** - Dynamic feature hoạt động chính xác. IP mới được thêm runtime và routing thay đổi ngay lập tức mà không cần restart WireGuard.
+
 ---
 
 ## 6. HƯỚNG DẪN VẬN HÀNH
