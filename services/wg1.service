@@ -1,0 +1,19 @@
+[Unit]
+Description=WireGuard Tunnel wg1 (WG2 Connection)
+After=network-online.target wg0.service
+Wants=network-online.target
+Requires=wg0.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/wg-quick up /etc/wireguard/wg1.conf
+ExecStop=/usr/bin/wg-quick down /etc/wireguard/wg1.conf
+ExecReload=/bin/bash -c 'wg syncconf wg1 <(wg-quick strip /etc/wireguard/wg1.conf)'
+
+# Restart on failure
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

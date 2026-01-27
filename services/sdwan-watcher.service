@@ -1,0 +1,23 @@
+[Unit]
+Description=SD-WAN IP List File Watcher
+After=network-online.target wg0.service
+Requires=wg0.service
+
+[Service]
+Type=simple
+ExecStart=/etc/sdwan/scripts/file-watcher.sh
+Restart=always
+RestartSec=10
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sdwan-watcher
+
+# Security
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/etc/sdwan
+
+[Install]
+WantedBy=multi-user.target
