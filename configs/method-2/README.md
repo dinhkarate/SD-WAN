@@ -10,9 +10,9 @@
                            ┌────────┴────────┐
                            │      VPS2       │ 103.109.187.179
                            │   (Exit Node)   │
-                           │   10.20.0.2     │
+                           │  wg1: 10.20.0.2 │
                            └────────▲────────┘
-                                    │ wg0 (client)
+                                    │ wg1 (client)
                                     │ connects to VPS1:51821
                                     │
 ┌──────────┐    wg0:51820   ┌───────┴────────┐
@@ -26,7 +26,7 @@
 ## Traffic Flow
 
 ```
-PC1 → VPS1:wg0 → VPS1:wg1 → VPS2:wg0 → Internet
+PC1 → VPS1:wg0 → VPS1:wg1 → VPS2:wg1 → Internet
                 (routing)   (NAT exit)
 ```
 
@@ -36,7 +36,7 @@ PC1 → VPS1:wg0 → VPS1:wg1 → VPS2:wg0 → Internet
 | ------------------ | ------ | ----------------------------------------- |
 | `vps1/wg0.conf`    | Server | Nhận kết nối từ PC1 (port 51820)          |
 | `vps1/wg1.conf`    | Server | Nhận kết nối từ VPS2 (port 51821)         |
-| `vps2/wg0.conf`    | Client | Kết nối TỚI VPS1:wg1, làm exit node (NAT) |
+| `vps2/wg1.conf`    | Client | Kết nối TỚI VPS1:wg1, làm exit node (NAT) |
 | `clients/pc1.conf` | Client | PC1 kết nối tới VPS1:wg0                  |
 | `routing-setup.sh` | Script | Policy routing trên VPS1                  |
 
@@ -58,8 +58,8 @@ wg genkey | tee /etc/wireguard/wg0_privatekey | wg pubkey > /etc/wireguard/wg0_p
 # VPS1 - wg1 (for VPS2)
 wg genkey | tee /etc/wireguard/wg1_privatekey | wg pubkey > /etc/wireguard/wg1_publickey
 
-# VPS2 - wg0 (exit node)
-wg genkey | tee /etc/wireguard/wg0_privatekey | wg pubkey > /etc/wireguard/wg0_publickey
+# VPS2 - wg1 (exit node)
+wg genkey | tee /etc/wireguard/wg1_privatekey | wg pubkey > /etc/wireguard/wg1_publickey
 
 # PC1
 wg genkey | tee pc1_privatekey | wg pubkey > pc1_publickey
@@ -91,16 +91,16 @@ ssh vps1 "systemctl enable wg-quick@wg0 wg-quick@wg1"
 
 ```bash
 # Copy config
-scp configs/method-2/vps2/wg0.conf vps2:/etc/wireguard/
+scp configs/method-2/vps2/wg1.conf vps2:/etc/wireguard/
 
 # Edit với actual keys
-ssh vps2 "nano /etc/wireguard/wg0.conf"
+ssh vps2 "nano /etc/wireguard/wg1.conf"
 
 # Start WG
-ssh vps2 "wg-quick up wg0"
+ssh vps2 "wg-quick up wg1"
 
 # Enable on boot
-ssh vps2 "systemctl enable wg-quick@wg0"
+ssh vps2 "systemctl enable wg-quick@wg1"
 ```
 
 ### 4. Firewall
@@ -140,9 +140,9 @@ Replace these values:
 | `<VPS1_WG0_PRIVATE_KEY>` | vps1/wg0.conf | wg0 private key      |
 | `<VPS1_WG0_PUBLIC_KEY>`  | clients/      | wg0 public key       |
 | `<VPS1_WG1_PRIVATE_KEY>` | vps1/wg1.conf | wg1 private key      |
-| `<VPS1_WG1_PUBLIC_KEY>`  | vps2/wg0.conf | wg1 public key       |
-| `<VPS2_WG0_PRIVATE_KEY>` | vps2/wg0.conf | VPS2 wg0 private key |
-| `<VPS2_WG0_PUBLIC_KEY>`  | vps1/wg1.conf | VPS2 wg0 public key  |
+| `<VPS1_WG1_PUBLIC_KEY>`  | vps2/wg1.conf | wg1 public key       |
+| `<VPS2_WG1_PRIVATE_KEY>` | vps2/wg1.conf | VPS2 wg1 private key |
+| `<VPS2_WG1_PUBLIC_KEY>`  | vps1/wg1.conf | VPS2 wg1 public key  |
 | `<PC1_PRIVATE_KEY>`      | clients/      | PC1 private key      |
 | `<PC1_PUBLIC_KEY>`       | vps1/wg0.conf | PC1 public key       |
 
