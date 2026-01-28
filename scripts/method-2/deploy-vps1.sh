@@ -99,7 +99,7 @@ PostUp = sysctl -w net.ipv4.ip_forward=1
 [Peer]
 # VPS2 - Exit node
 PublicKey = $VPS2_WG1_PUBKEY
-AllowedIPs = 10.20.0.2/32, 0.0.0.0/0
+AllowedIPs = 10.20.0.2/32
 EOF
 
 # Copy routing script (should be uploaded to /tmp first)
