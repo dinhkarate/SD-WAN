@@ -102,68 +102,16 @@ PublicKey = $VPS2_WG1_PUBKEY
 AllowedIPs = 10.20.0.2/32, 0.0.0.0/0
 EOF
 
-# Create routing script
-log "Creating routing script..."
+# Copy routing script (should be uploaded to /tmp first)
+log "Setting up routing script..."
 mkdir -p /etc/sdwan/scripts/method-2
-cat > /etc/sdwan/scripts/method-2/routing-setup.sh << 'SCRIPT'
-#!/bin/bash
-# Split routing: China IPs → VPS1 exit, Others → VPS2 exit
-
-IPSET_FILE='/etc/sdwan/chinaip.txt'
-VPS1_GATEWAY='103.109.187.1'
-
-load_ipset() {
-    ipset destroy china_ips 2>/dev/null || true
-    ipset create china_ips hash:net hashsize 8192 maxelem 65536
-    
-    if [ -f "$IPSET_FILE" ]; then
-        while read ip; do
-            [ -n "$ip" ] && ipset add china_ips $ip 2>/dev/null || true
-        done < "$IPSET_FILE"
-        echo "Loaded $(ipset list china_ips 2>/dev/null | grep -c '^[0-9]') China IPs"
-    else
-        echo "Warning: $IPSET_FILE not found"
-    fi
-}
-
-case "$1" in
-  up)
-    load_ipset
-    
-    # Mark packets: 100 = VPS2 exit, 200 = VPS1 local exit (China)
-    iptables -t mangle -A PREROUTING -i wg0 -j MARK --set-mark 100
-    iptables -t mangle -A PREROUTING -i wg0 -m set --match-set china_ips dst -j MARK --set-mark 200
-    
-    # Routing tables
-    grep -q '^100 vps2exit' /etc/iproute2/rt_tables || echo '100 vps2exit' >> /etc/iproute2/rt_tables
-    grep -q '^200 vps1exit' /etc/iproute2/rt_tables || echo '200 vps1exit' >> /etc/iproute2/rt_tables
-    
-    ip rule add fwmark 100 lookup 100 prio 100 2>/dev/null || true
-    ip rule add fwmark 200 lookup 200 prio 99 2>/dev/null || true
-    
-    ip route replace default via 10.20.0.2 dev wg1 table 100
-    ip route replace default via $VPS1_GATEWAY dev eth0 table 200
-    
-    # NAT for local exit traffic
-    iptables -t nat -A POSTROUTING -m mark --mark 200 -o eth0 -j MASQUERADE
-    
-    echo 'Routing UP: China→VPS1, Others→VPS2'
-    ;;
-  down)
-    iptables -t mangle -D PREROUTING -i wg0 -j MARK --set-mark 100 2>/dev/null || true
-    iptables -t mangle -D PREROUTING -i wg0 -m set --match-set china_ips dst -j MARK --set-mark 200 2>/dev/null || true
-    iptables -t nat -D POSTROUTING -m mark --mark 200 -o eth0 -j MASQUERADE 2>/dev/null || true
-    
-    ip rule del fwmark 100 lookup 100 2>/dev/null || true
-    ip rule del fwmark 200 lookup 200 2>/dev/null || true
-    
-    ipset destroy china_ips 2>/dev/null || true
-    
-    echo 'Routing DOWN'
-    ;;
-esac
-SCRIPT
-chmod +x /etc/sdwan/scripts/method-2/routing-setup.sh
+if [ -f /tmp/routing-setup.sh ]; then
+    cp /tmp/routing-setup.sh /etc/sdwan/scripts/method-2/
+    chmod +x /etc/sdwan/scripts/method-2/routing-setup.sh
+    log "Copied routing-setup.sh"
+else
+    warn "routing-setup.sh not found in /tmp - upload it first!"
+fi
 
 # Copy China IPs if provided
 if [ -f /tmp/chinaip.txt ]; then

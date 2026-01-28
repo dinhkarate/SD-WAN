@@ -1,236 +1,168 @@
 #!/bin/bash
 #
-# VPS1 Policy Routing Script - Method 2
+# VPS1 Policy Routing Script - Method 2 (Using ipset)
 # 
 # Kiến trúc:
 #   PC1 ──wg0──► VPS1 ──wg1──► VPS2 ──► Internet
 #                 │
-#                 └─ Special IPs ─► eth0 (VPS1 IP)
+#                 └─ China IPs ─► eth0 (VPS1 IP)
 #
 # Traffic flow:
-#   - Packets từ PC1 (10.10.0.0/24) đến special IPs → ra eth0 (IP VPS1)
-#   - Packets từ PC1 đến các IP khác → forward qua wg1 → VPS2
+#   - Packets từ PC1 đến China IPs → mark 200 → ra eth0 (IP VPS1)
+#   - Packets từ PC1 đến các IP khác → mark 100 → forward qua wg1 → VPS2
 #
 
-set -e
-
 # Configuration
-TABLE_SPECIAL="special"       # Routing table cho special IPs (ra eth0) - defined in rt_tables as 100
-TABLE_TUNNEL="tunnel"         # Routing table cho tunnel traffic (qua wg1) - defined in rt_tables as 200
+IPSET_FILE='/etc/sdwan/chinaip.txt'
 WAN_IF="eth0"
-WG_CLIENT_IF="wg0"            # Interface nhận PC1
-WG_UPSTREAM_IF="wg1"          # Interface tunnel tới VPS2
-CLIENT_SUBNET="10.10.0.0/24"
-SPECIAL_IPS_FILE="/etc/sdwan/special-ips.txt"
-PRIORITY_SPECIAL=50           # Priority cao hơn (check trước)
-PRIORITY_DEFAULT=100          # Priority cho default tunnel route
+WG_CLIENT_IF="wg0"
+WG_UPSTREAM_IF="wg1"
+VPS2_IP="10.20.0.2"
+
+# Get default gateway
+get_gateway() {
+    ip route | grep "default via" | grep "$WAN_IF" | awk '{print $3}' | head -1
+}
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
 }
 
+load_ipset() {
+    # Destroy existing ipset
+    ipset destroy china_ips 2>/dev/null || true
+    
+    # Create new ipset
+    ipset create china_ips hash:net hashsize 8192 maxelem 65536
+    
+    if [ -f "$IPSET_FILE" ]; then
+        local count=0
+        while IFS= read -r ip || [ -n "$ip" ]; do
+            # Skip empty lines and comments
+            [[ -z "$ip" || "$ip" =~ ^# ]] && continue
+            ipset add china_ips "$ip" 2>/dev/null && count=$((count + 1))
+        done < "$IPSET_FILE"
+        log "Loaded $count China IPs into ipset"
+    else
+        log "Warning: $IPSET_FILE not found - no China IP routing"
+    fi
+}
+
 ensure_rt_tables() {
-    # Đảm bảo routing tables được định nghĩa
-    if ! grep -q "^100.*special" /etc/iproute2/rt_tables 2>/dev/null; then
-        echo "100 special" >> /etc/iproute2/rt_tables
-        log "Added table 'special' to rt_tables"
-    fi
-    if ! grep -q "^200.*tunnel" /etc/iproute2/rt_tables 2>/dev/null; then
-        echo "200 tunnel" >> /etc/iproute2/rt_tables
-        log "Added table 'tunnel' to rt_tables"
-    fi
+    grep -q '^100 vps2exit' /etc/iproute2/rt_tables 2>/dev/null || \
+        echo '100 vps2exit' >> /etc/iproute2/rt_tables
+    grep -q '^200 vps1exit' /etc/iproute2/rt_tables 2>/dev/null || \
+        echo '200 vps1exit' >> /etc/iproute2/rt_tables
 }
 
-setup_base_routes() {
-    # Get default gateway
-    local gateway=$(ip route | grep "default via" | grep "$WAN_IF" | awk '{print $3}' | head -1)
+setup_routing() {
+    local gateway=$(get_gateway)
     
-    # Table special: default route qua eth0 (cho special IPs)
-    if ! ip route show table $TABLE_SPECIAL 2>/dev/null | grep -q "default"; then
-        if [[ -n "$gateway" ]]; then
-            ip route add default via "$gateway" dev "$WAN_IF" table $TABLE_SPECIAL
-            log "Added default route via $gateway to table $TABLE_SPECIAL"
-        fi
+    if [ -z "$gateway" ]; then
+        log "Error: Cannot detect default gateway for $WAN_IF"
+        return 1
     fi
     
-    # Table tunnel: default route qua wg1 (cho non-special traffic)
-    if ! ip route show table $TABLE_TUNNEL 2>/dev/null | grep -q "default"; then
-        ip route add default dev "$WG_UPSTREAM_IF" src 10.20.0.2 table $TABLE_TUNNEL 2>/dev/null || true
-        log "Added default route via $WG_UPSTREAM_IF to table $TABLE_TUNNEL"
-    fi
+    log "Using gateway: $gateway"
     
-    # Default rule: traffic từ PC1 đi qua tunnel (priority thấp hơn special IPs)
-    if ! ip rule show | grep -q "from $CLIENT_SUBNET lookup $TABLE_TUNNEL"; then
-        ip rule add from "$CLIENT_SUBNET" table $TABLE_TUNNEL priority $PRIORITY_DEFAULT
-        log "Added default rule for $CLIENT_SUBNET via $TABLE_TUNNEL"
-    fi
-}
-
-setup_special_ip_rules() {
-    if [[ ! -f "$SPECIAL_IPS_FILE" ]]; then
-        log "Warning: $SPECIAL_IPS_FILE not found"
-        return
-    fi
+    # Setup routing tables
+    # Table 100: Route through VPS2 (wg1)
+    ip route replace default via $VPS2_IP dev $WG_UPSTREAM_IF table 100
     
-    local gateway=$(ip route | grep "default via" | grep "$WAN_IF" | awk '{print $3}' | head -1)
-    local count=0
+    # Table 200: Route through local eth0 (for China IPs)
+    ip route replace default via $gateway dev $WAN_IF table 200
     
-    while IFS= read -r line; do
-        # Skip comments and empty lines
-        [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue
-        
-        # Normalize IP (remove /32 suffix for rule matching)
-        local ip="${line%/32}"
-        
-        # Add route to table special
-        ip route add "$line" via "$gateway" dev "$WAN_IF" table $TABLE_SPECIAL 2>/dev/null || true
-        
-        # Add ip rule with high priority (check before default tunnel rule)
-        if ! ip rule show | grep -q "from $CLIENT_SUBNET to $ip lookup $TABLE_SPECIAL"; then
-            ip rule add from "$CLIENT_SUBNET" to "$ip" table $TABLE_SPECIAL priority $PRIORITY_SPECIAL
-            count=$((count + 1))
-        fi
-    done < "$SPECIAL_IPS_FILE"
+    # Add ip rules for fwmark
+    ip rule add fwmark 100 lookup 100 prio 100 2>/dev/null || true
+    ip rule add fwmark 200 lookup 200 prio 99 2>/dev/null || true
     
-    log "Loaded $count special IP rules from $SPECIAL_IPS_FILE"
+    log "Routing tables configured"
 }
 
 setup_iptables() {
-    # Detect iptables command (legacy vs nft)
-    local IPT="iptables"
-    if command -v iptables-legacy &>/dev/null && iptables-legacy -L -n &>/dev/null; then
-        IPT="iptables-legacy"
-        log "Using iptables-legacy"
-    fi
-
-    # Xóa rules cũ trước (nếu có) để tránh duplicate
-    $IPT -t nat -D POSTROUTING -s "$CLIENT_SUBNET" -o "$WAN_IF" -j MASQUERADE 2>/dev/null || true
-    $IPT -t nat -D POSTROUTING -s "$CLIENT_SUBNET" -o "$WG_UPSTREAM_IF" -j MASQUERADE 2>/dev/null || true
-    $IPT -D FORWARD -i "$WG_CLIENT_IF" -o "$WAN_IF" -j ACCEPT 2>/dev/null || true
-    $IPT -D FORWARD -i "$WAN_IF" -o "$WG_CLIENT_IF" -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
-    $IPT -D FORWARD -i "$WG_CLIENT_IF" -o "$WG_UPSTREAM_IF" -j ACCEPT 2>/dev/null || true
-    $IPT -D FORWARD -i "$WG_UPSTREAM_IF" -o "$WG_CLIENT_IF" -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
-
-    # NAT cho traffic ra eth0 (special IPs)
-    $IPT -t nat -A POSTROUTING -s "$CLIENT_SUBNET" -o "$WAN_IF" -j MASQUERADE
-    log "Added NAT for $CLIENT_SUBNET via $WAN_IF"
+    # Clean existing rules first
+    iptables -t mangle -D PREROUTING -i $WG_CLIENT_IF -j MARK --set-mark 100 2>/dev/null || true
+    iptables -t mangle -D PREROUTING -i $WG_CLIENT_IF -m set --match-set china_ips dst -j MARK --set-mark 200 2>/dev/null || true
+    iptables -t nat -D POSTROUTING -m mark --mark 200 -o $WAN_IF -j MASQUERADE 2>/dev/null || true
     
-    # NAT cho traffic qua wg1 tới VPS2
-    $IPT -t nat -A POSTROUTING -s "$CLIENT_SUBNET" -o "$WG_UPSTREAM_IF" -j MASQUERADE
-    log "Added NAT for $CLIENT_SUBNET via $WG_UPSTREAM_IF"
+    # Mark all traffic from wg0 with 100 (default: go to VPS2)
+    iptables -t mangle -A PREROUTING -i $WG_CLIENT_IF -j MARK --set-mark 100
     
-    # Forward rules: wg0 -> eth0 (special IPs)
-    $IPT -A FORWARD -i "$WG_CLIENT_IF" -o "$WAN_IF" -j ACCEPT
-    $IPT -A FORWARD -i "$WAN_IF" -o "$WG_CLIENT_IF" -m state --state ESTABLISHED,RELATED -j ACCEPT
+    # Override mark for China IPs with 200 (go to local eth0)
+    iptables -t mangle -A PREROUTING -i $WG_CLIENT_IF -m set --match-set china_ips dst -j MARK --set-mark 200
     
-    # Forward rules: wg0 -> wg1 (tunnel traffic)
-    $IPT -A FORWARD -i "$WG_CLIENT_IF" -o "$WG_UPSTREAM_IF" -j ACCEPT
-    $IPT -A FORWARD -i "$WG_UPSTREAM_IF" -o "$WG_CLIENT_IF" -m state --state ESTABLISHED,RELATED -j ACCEPT
-        
-    log "Configured iptables rules"
+    # NAT for traffic exiting through eth0 (China IPs)
+    iptables -t nat -A POSTROUTING -m mark --mark 200 -o $WAN_IF -j MASQUERADE
+    
+    log "iptables rules configured"
 }
 
 cleanup() {
     log "Cleaning up..."
     
-    # Detect iptables command
-    local IPT="iptables"
-    if command -v iptables-legacy &>/dev/null && iptables-legacy -L -n &>/dev/null; then
-        IPT="iptables-legacy"
-    fi
-    
     # Remove iptables rules
-    $IPT -t nat -D POSTROUTING -s "$CLIENT_SUBNET" -o "$WAN_IF" -j MASQUERADE 2>/dev/null || true
-    $IPT -t nat -D POSTROUTING -s "$CLIENT_SUBNET" -o "$WG_UPSTREAM_IF" -j MASQUERADE 2>/dev/null || true
-    $IPT -D FORWARD -i "$WG_CLIENT_IF" -o "$WAN_IF" -j ACCEPT 2>/dev/null || true
-    $IPT -D FORWARD -i "$WAN_IF" -o "$WG_CLIENT_IF" -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
-    $IPT -D FORWARD -i "$WG_CLIENT_IF" -o "$WG_UPSTREAM_IF" -j ACCEPT 2>/dev/null || true
-    $IPT -D FORWARD -i "$WG_UPSTREAM_IF" -o "$WG_CLIENT_IF" -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
+    iptables -t mangle -D PREROUTING -i $WG_CLIENT_IF -j MARK --set-mark 100 2>/dev/null || true
+    iptables -t mangle -D PREROUTING -i $WG_CLIENT_IF -m set --match-set china_ips dst -j MARK --set-mark 200 2>/dev/null || true
+    iptables -t nat -D POSTROUTING -m mark --mark 200 -o $WAN_IF -j MASQUERADE 2>/dev/null || true
     
-    # Remove all ip rules for CLIENT_SUBNET
-    while ip rule del from "$CLIENT_SUBNET" 2>/dev/null; do :; done
+    # Remove ip rules
+    ip rule del fwmark 100 lookup 100 2>/dev/null || true
+    ip rule del fwmark 200 lookup 200 2>/dev/null || true
     
     # Flush routing tables
-    ip route flush table $TABLE_SPECIAL 2>/dev/null || true
-    ip route flush table $TABLE_TUNNEL 2>/dev/null || true
+    ip route flush table 100 2>/dev/null || true
+    ip route flush table 200 2>/dev/null || true
+    
+    # Destroy ipset
+    ipset destroy china_ips 2>/dev/null || true
     
     log "Cleanup complete"
 }
 
-reload_special_ips() {
-    log "Reloading special IPs..."
-    
-    # Remove existing special IP rules (priority 50)
-    while ip rule del priority $PRIORITY_SPECIAL 2>/dev/null; do :; done
-    
-    # Flush and rebuild table special routes
-    ip route flush table $TABLE_SPECIAL 2>/dev/null || true
-    
-    # Re-add default route to table special
-    local gateway=$(ip route | grep "default via" | grep "$WAN_IF" | awk '{print $3}' | head -1)
-    if [[ -n "$gateway" ]]; then
-        ip route add default via "$gateway" dev "$WAN_IF" table $TABLE_SPECIAL
-    fi
-    
-    # Re-add special IP rules
-    setup_special_ip_rules
-    
-    log "Special IPs reloaded"
-}
-
 status() {
-    # Detect iptables command
-    local IPT="iptables"
-    if command -v iptables-legacy &>/dev/null && iptables-legacy -L -n &>/dev/null; then
-        IPT="iptables-legacy"
-    fi
-
-    echo "=== Special IPs File ==="
-    if [[ -f "$SPECIAL_IPS_FILE" ]]; then
-        grep -v "^#" "$SPECIAL_IPS_FILE" | grep -v "^$" || echo "(empty)"
-    else
-        echo "File not found: $SPECIAL_IPS_FILE"
-    fi
+    echo "=== ipset china_ips ==="
+    ipset list china_ips 2>/dev/null | head -10 || echo "Not created"
+    echo "Number of entries: $(ipset list china_ips 2>/dev/null | grep -c '^[0-9]' || echo 0)"
     echo ""
     
-    echo "=== IP Rules (priority $PRIORITY_SPECIAL - Special IPs) ==="
-    ip rule show | grep "from $CLIENT_SUBNET to" || echo "No special IP rules"
+    echo "=== IP Rules ==="
+    ip rule show | grep -E 'fwmark|100|200' | head -5
     echo ""
     
-    echo "=== IP Rules (priority $PRIORITY_DEFAULT - Default Tunnel) ==="
-    ip rule show | grep "from $CLIENT_SUBNET lookup" | grep -v "to" || echo "No default tunnel rule"
+    echo "=== Table 100 (VPS2 exit) ==="
+    ip route show table 100 2>/dev/null || echo "Empty"
     echo ""
     
-    echo "=== Routing Table: $TABLE_SPECIAL ==="
-    ip route show table $TABLE_SPECIAL 2>/dev/null || echo "Empty"
+    echo "=== Table 200 (VPS1 local exit) ==="
+    ip route show table 200 2>/dev/null || echo "Empty"
     echo ""
     
-    echo "=== Routing Table: $TABLE_TUNNEL ==="
-    ip route show table $TABLE_TUNNEL 2>/dev/null || echo "Empty"
+    echo "=== iptables mangle ==="
+    iptables -t mangle -L PREROUTING -n -v 2>/dev/null | grep -E 'wg0|china_ips|MARK' | head -5
     echo ""
     
-    echo "=== NAT Rules ==="
-    $IPT -t nat -L POSTROUTING -n -v 2>/dev/null | grep -E "$CLIENT_SUBNET|MASQUERADE" | head -5 || echo "No NAT rules"
-    echo ""
-    
-    echo "=== FORWARD Rules ==="
-    $IPT -L FORWARD -n -v 2>/dev/null | grep -E "$WG_CLIENT_IF|$WG_UPSTREAM_IF" | head -5 || echo "No forward rules"
+    echo "=== Test IPs ==="
+    echo -n "8.8.8.8 (Google): "
+    ipset test china_ips 8.8.8.8 2>&1 | grep -q "is in set" && echo "China (VPS1)" || echo "Other (VPS2)"
+    echo -n "223.5.5.5 (Alibaba): "
+    ipset test china_ips 223.5.5.5 2>&1 | grep -q "is in set" && echo "China (VPS1)" || echo "Other (VPS2)"
 }
 
 case "$1" in
     up)
-        log "Setting up policy routing..."
+        log "Setting up split routing..."
         ensure_rt_tables
-        setup_base_routes
-        setup_special_ip_rules
+        load_ipset
+        setup_routing
         setup_iptables
-        log "Policy routing enabled"
+        log "Split routing enabled: China→VPS1, Others→VPS2"
         ;;
     down)
         cleanup
         ;;
     reload)
-        reload_special_ips
+        load_ipset
+        log "ipset reloaded"
         ;;
     status)
         status
