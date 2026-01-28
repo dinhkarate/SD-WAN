@@ -54,9 +54,16 @@ WG1_PUBKEY=$(cat /etc/wireguard/wg1_publickey)
 log "wg0 pubkey: $WG0_PUBKEY"
 log "wg1 pubkey: $WG1_PUBKEY"
 
-# Get VPS2 pubkey
-if [ -n "$1" ] && [ "$1" != "--force" ]; then
-    VPS2_WG1_PUBKEY="$1"
+# Get VPS2 pubkey (check $2 if --force is in $1)
+VPS2_PUBKEY_ARG=""
+if [ "$1" = "--force" ] && [ -n "$2" ]; then
+    VPS2_PUBKEY_ARG="$2"
+elif [ -n "$1" ] && [ "$1" != "--force" ]; then
+    VPS2_PUBKEY_ARG="$1"
+fi
+
+if [ -n "$VPS2_PUBKEY_ARG" ]; then
+    VPS2_WG1_PUBKEY="$VPS2_PUBKEY_ARG"
 elif [ -f /etc/wireguard/vps2_wg1_pubkey ]; then
     VPS2_WG1_PUBKEY=$(cat /etc/wireguard/vps2_wg1_pubkey)
 else
@@ -93,13 +100,18 @@ cat > /etc/wireguard/wg1.conf << EOF
 Address = 10.20.0.1/24
 ListenPort = 51821
 PrivateKey = $WG1_PRIVKEY
+# Disable automatic routing - we use policy routing instead
+Table = off
 
 PostUp = sysctl -w net.ipv4.ip_forward=1
 
 [Peer]
-# VPS2 - Exit node
+# VPS2 - Exit node (receives forwarded traffic from PC1)
 PublicKey = $VPS2_WG1_PUBKEY
-AllowedIPs = 10.20.0.2/32
+# IMPORTANT: 0.0.0.0/0 needed to allow forwarding internet traffic to VPS2
+# This does NOT affect VPS1's own traffic because wg1 has no default route
+# Only policy-routed traffic (fwmark) from wg0 will use this
+AllowedIPs = 10.20.0.2/32, 0.0.0.0/0
 EOF
 
 # Copy routing script (should be uploaded to /tmp first)

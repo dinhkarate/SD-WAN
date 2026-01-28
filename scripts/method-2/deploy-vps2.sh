@@ -44,9 +44,16 @@ WG1_PUBKEY=$(cat /etc/wireguard/wg1_publickey)
 
 log "wg1 pubkey: $WG1_PUBKEY"
 
-# Get VPS1 pubkey
-if [ -n "$1" ] && [ "$1" != "--force" ]; then
-    VPS1_WG1_PUBKEY="$1"
+# Get VPS1 pubkey (check $2 if --force is in $1)
+VPS1_PUBKEY_ARG=""
+if [ "$1" = "--force" ] && [ -n "$2" ]; then
+    VPS1_PUBKEY_ARG="$2"
+elif [ -n "$1" ] && [ "$1" != "--force" ]; then
+    VPS1_PUBKEY_ARG="$1"
+fi
+
+if [ -n "$VPS1_PUBKEY_ARG" ]; then
+    VPS1_WG1_PUBKEY="$VPS1_PUBKEY_ARG"
 elif [ -f /etc/wireguard/vps1_wg1_pubkey ]; then
     VPS1_WG1_PUBKEY=$(cat /etc/wireguard/vps1_wg1_pubkey)
 else
