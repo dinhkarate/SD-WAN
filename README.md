@@ -1,284 +1,208 @@
-# SD-WAN Split Routing với WireGuard
+# SD-WAN: Split Routing với Single Interface Chain (Method 1)
 
-## Kiến trúc mới (Split Routing)
+Cấu hình VPN split routing sử dụng **single WireGuard interface** trên mỗi node.
+
+## Kiến trúc
 
 ```
-                         ┌─────────────────────┐
-                         │  Internet SpecialIP │
-                         └──────────▲──────────┘
-                                    │ (Match IP list → eth0)
-┌──────────┐    wg0      ┌──────────┴──────────┐
-│   PC1    │────────────►│       WG1           │
-│          │  10.10.0.x  │   (VPS1 - Router)   │
-└──────────┘             │                     │
-                         │  Policy Routing:    │
-                         │  - Match → eth0     │
-                         │  - No Match → wg1   │
-                         └──────────┬──────────┘
-                                    │ wg1 10.20.0.x
-                         ┌──────────▼──────────┐
-                         │       WG2           │
-                         │   (VPS2 - Exit)     │
-                         └──────────┬──────────┘
-                                    │ eth0
-                         ┌──────────▼──────────┐
-                         │  Internet (Default) │
-                         └─────────────────────┘
+                         ┌────────────────────┐
+                         │ Internet (Special) │
+                         └─────────▲──────────┘
+                                   │ eth0 (VPS1 IP: 103.109.187.182)
+                                   │
+┌──────────┐   wg0    ┌────────────┴────────────┐   wg0    ┌──────────────┐
+│          │─────────►│         VPS1            │◄────────►│     VPS2     │
+│   PC1    │  :51820  │    103.109.187.182      │  :51820  │103.109.187.179│
+│10.10.0.2 │          │       10.10.0.1         │          │  10.10.0.3   │
+└──────────┘          └─────────────────────────┘          └───────┬──────┘
+                                                                   │
+                                                                   ▼
+                                                          ┌───────────────┐
+                                                          │Internet (ALL) │
+                                                          │ IP: VPS2      │
+                                                          └───────────────┘
 ```
 
-**Logic routing:**
+## Traffic Flow
 
-- Traffic đến **Special IPs** (từ `special-ips.json`) → đi trực tiếp qua `eth0` của WG1
-- Traffic còn lại → đi qua tunnel `wg1` đến WG2 → ra Internet
+| Traffic từ PC1 đến         | Route qua   | IP public       |
+| -------------------------- | ----------- | --------------- |
+| Special IPs (8.8.8.8, ...) | VPS1 eth0   | 103.109.187.182 |
+| Tất cả IP khác             | VPS1 → VPS2 | 103.109.187.179 |
 
-## Tính năng
+## Cách hoạt động
 
-- ✅ **Split Routing**: Traffic đến special IPs đi trực tiếp qua WG1, còn lại qua WG2
-- ✅ **Auto-reload**: Tự động reload IP list khi file thay đổi (inotify)
-- ✅ **Auto-reconnect**: Systemd services tự khởi động lại khi disconnect
-- ✅ **REST API**: Quản lý routes động qua HTTP API
-- ✅ **ipset**: Hiệu suất cao với 50K+ routes
+1. **PC1** kết nối VPS1 qua WireGuard (wg0, port 51820)
+2. **VPS1** nhận traffic từ PC1:
+   - Nếu destination IP nằm trong **special-ips.txt** → mark packet → route qua eth0 (IP VPS1)
+   - Nếu không match → forward qua wg0 tới VPS2
+3. **VPS2** nhận traffic từ VPS1 → NAT ra Internet (IP VPS2)
 
----
+## Routing Logic trên VPS1
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    VPS1 Routing                         │
+├─────────────────────────────────────────────────────────┤
+│  1. ipset "special_ips" chứa danh sách IP đặc biệt      │
+│  2. iptables mangle: mark packet nếu dst in special_ips │
+│  3. ip rule:                                            │
+│     - fwmark 100 → table 100 (eth0, gateway mặc định)   │
+│     - from 10.10.0.2 → table 200 (wg0, via 10.10.0.3)   │
+│  4. iptables forward: cho phép wg0↔wg0, wg0→eth0        │
+│  5. iptables nat: MASQUERADE cho traffic ra eth0        │
+└─────────────────────────────────────────────────────────┘
+```
 
 ## Cấu trúc thư mục
 
 ```
-SD-WAN/
-├── configs/
-│   ├── pc1/wg0.conf         # Config cho PC1
-│   ├── wg1/
-│   │   ├── wg0.conf         # WG1 tunnel to PC1
-│   │   └── wg1.conf         # WG1 tunnel to WG2
-│   └── wg2/wg0.conf         # Config cho WG2
-├── scripts/
-│   ├── wg0-up.sh            # Chạy khi wg0 up (setup routing)
-│   ├── wg0-down.sh          # Cleanup khi wg0 down
-│   ├── load-special-ips.sh  # Load IP list vào ipset
-│   └── file-watcher.sh      # Watch file changes
-├── services/
-│   ├── wg0.service          # Systemd cho wg0
-│   ├── wg1.service          # Systemd cho wg1
-│   ├── sdwan-watcher.service  # File watcher service
-│   └── sdwan-api.service    # API server service
-├── api/
-│   └── server.sh            # REST API server
-├── documents/               # Tài liệu gốc (screenshots, diagrams)
-└── config.env.example       # Template config
+configs/
+├── pc1/wg0.conf      # PC1 client
+├── vps1/wg0.conf     # VPS1: nhận PC1 + kết nối VPS2
+└── vps2/wg0.conf     # VPS2: exit node
+
+scripts/
+└── wg0-up.sh         # Setup policy routing (up/down/status/reload)
 ```
 
----
+## Hướng dẫn cài đặt
 
-## Hướng dẫn Deploy
-
-### 1. Chuẩn bị (trên cả 2 VPS)
+### Bước 1: Cài đặt VPS2 (Exit Node)
 
 ```bash
-apt update && apt install -y wireguard wireguard-tools ipset jq inotify-tools socat
+ssh vina8
 
-# Enable IP forwarding
-echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
-sysctl -p
-```
+apt update && apt install -y wireguard
 
-### 2. Generate WireGuard Keys
+cat > /etc/wireguard/wg0.conf << 'EOF'
+[Interface]
+Address = 10.10.0.3/24
+ListenPort = 51820
+PrivateKey = <VPS2_PRIVATE_KEY>
 
-```bash
-# Trên mỗi máy (PC1, WG1, WG2)
-wg genkey | tee privatekey | wg pubkey > publickey
+PostUp = sysctl -w net.ipv4.ip_forward=1
+PostUp = iptables -t nat -A POSTROUTING -s 10.10.0.0/24 -o eth0 -j MASQUERADE
+PostUp = iptables -A FORWARD -i wg0 -o eth0 -j ACCEPT
+PostUp = iptables -A FORWARD -i eth0 -o wg0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+PostDown = iptables -t nat -D POSTROUTING -s 10.10.0.0/24 -o eth0 -j MASQUERADE
+PostDown = iptables -D FORWARD -i wg0 -o eth0 -j ACCEPT
+PostDown = iptables -D FORWARD -i eth0 -o wg0 -m state --state RELATED,ESTABLISHED -j ACCEPT
 
-# WG1 cần 2 key pairs (cho wg0 và wg1)
-wg genkey | tee privatekey-wg1 | wg pubkey > publickey-wg1
-```
+[Peer]
+PublicKey = <VPS1_PUBLIC_KEY>
+AllowedIPs = 10.10.0.1/32, 10.10.0.2/32
+EOF
 
-### 3. Deploy WG2 (VPS2 - Exit Node)
-
-```bash
-# Copy config
-scp configs/wg2/wg0.conf root@VPS2:/etc/wireguard/wg0.conf
-
-# SSH vào VPS2 và thay thế placeholders
-ssh root@VPS2
-vim /etc/wireguard/wg0.conf
-# Thay: <WG2_PRIVATE_KEY>, <WG1_WG1_PUBLIC_KEY>
-
-# Start
-systemctl enable --now wg-quick@wg0
-```
-
-### 4. Deploy WG1 (VPS1 - Router)
-
-```bash
-# SSH vào VPS1
-ssh root@VPS1
-
-# Tạo thư mục
-mkdir -p /etc/sdwan/{scripts,api}
-
-# Copy files (từ local)
-scp scripts/*.sh root@VPS1:/etc/sdwan/scripts/
-scp api/server.sh root@VPS1:/etc/sdwan/api/
-scp config.env.example root@VPS1:/etc/sdwan/config.env
-
-chmod +x /etc/sdwan/scripts/*.sh /etc/sdwan/api/*.sh
-
-# Copy WireGuard configs
-scp configs/wg1/*.conf root@VPS1:/etc/wireguard/
-
-# Thay thế placeholders trong configs
-vim /etc/wireguard/wg0.conf
-vim /etc/wireguard/wg1.conf
-vim /etc/sdwan/config.env
-
-# Copy IP list
-scp documents/260115-chinaip.json root@VPS1:/etc/sdwan/special-ips.json
-
-# Copy systemd services
-scp services/*.service root@VPS1:/etc/systemd/system/
-systemctl daemon-reload
-
-# Start services
-systemctl enable --now wg-quick@wg0 wg-quick@wg1 sdwan-watcher sdwan-api
-```
-
-### 5. Deploy PC1
-
-```bash
-# Copy config và thay thế placeholders
-# Thay: <PC1_PRIVATE_KEY>, <WG1_PUBLIC_KEY>, <IP_VPS1>
-
-# Linux
 wg-quick up wg0
-
-# Windows: Import file .conf vào WireGuard app
+systemctl enable wg-quick@wg0
+ufw allow 51820/udp
 ```
 
----
-
-## API Usage
-
-### Health Check
+### Bước 2: Cài đặt VPS1 (Gateway)
 
 ```bash
-curl http://<WG1_IP>:8080/health
+ssh vina7
+
+apt update && apt install -y wireguard ipset
+
+# Tạo thư mục scripts
+mkdir -p /etc/sdwan/scripts
+
+# Copy wg0-up.sh vào /etc/sdwan/scripts/ và chmod +x
+
+# Tạo config
+cat > /etc/wireguard/wg0.conf << 'EOF'
+[Interface]
+Address = 10.10.0.1/24
+ListenPort = 51820
+PrivateKey = <VPS1_PRIVATE_KEY>
+Table = off
+
+PostUp = sysctl -w net.ipv4.ip_forward=1
+PostUp = /etc/sdwan/scripts/wg0-up.sh up
+PostDown = /etc/sdwan/scripts/wg0-up.sh down
+
+[Peer]
+PublicKey = <PC1_PUBLIC_KEY>
+AllowedIPs = 10.10.0.2/32
+
+[Peer]
+PublicKey = <VPS2_PUBLIC_KEY>
+Endpoint = 103.109.187.179:51820
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25
+EOF
+
+# Tạo danh sách special IPs
+cat > /etc/sdwan/special-ips.txt << 'EOF'
+# IPs đi thẳng qua VPS1 (không qua VPS2)
+8.8.8.8/32
+8.8.4.4/32
+1.1.1.1/32
+EOF
+
+wg-quick up wg0
+systemctl enable wg-quick@wg0
+ufw allow 51820/udp
 ```
 
-### Xem danh sách IP đặc biệt
+### Bước 3: Cấu hình PC1
+
+```ini
+[Interface]
+Address = 10.10.0.2/24
+PrivateKey = <PC1_PRIVATE_KEY>
+DNS = 8.8.8.8, 1.1.1.1
+
+[Peer]
+PublicKey = <VPS1_PUBLIC_KEY>
+Endpoint = 103.109.187.182:51820
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25
+```
+
+## Quản lý Special IPs
 
 ```bash
-curl -H "Authorization: Bearer YOUR_TOKEN" http://<WG1_IP>:8080/api/ips
+# Thêm IP mới
+echo "1.2.3.4/32" >> /etc/sdwan/special-ips.txt
+
+# Reload (không cần restart WG)
+/etc/sdwan/scripts/wg0-up.sh reload
+
+# Xem trạng thái
+/etc/sdwan/scripts/wg0-up.sh status
 ```
 
-### Thêm IP vào danh sách
+## Kiểm tra
 
 ```bash
-curl -X POST -H "Authorization: Bearer YOUR_TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"ip":"1.2.3.0/24"}' \
-     http://<WG1_IP>:8080/api/ips
-```
-
-### Xóa IP khỏi danh sách
-
-```bash
-curl -X DELETE -H "Authorization: Bearer YOUR_TOKEN" \
-     http://<WG1_IP>:8080/api/ips/1.2.3.0/24
-```
-
-### Reload IP list từ file
-
-```bash
-curl -X POST -H "Authorization: Bearer YOUR_TOKEN" \
-     http://<WG1_IP>:8080/api/reload
-```
-
-### Xem status
-
-```bash
-curl -H "Authorization: Bearer YOUR_TOKEN" http://<WG1_IP>:8080/api/status
-```
-
----
-
-## Format file IP list
-
-Hỗ trợ các format JSON sau:
-
-```json
-// Format 1: Array đơn giản
-["1.2.3.0/24", "5.6.7.8", "10.0.0.0/8"]
-
-// Format 2: Object với key "ips"
-{"ips": ["1.2.3.0/24", "5.6.7.8"]}
-
-// Format 3: Object với key "routes"
-{"routes": ["1.2.3.0/24", "5.6.7.8"]}
-```
-
----
-
-## Troubleshooting
-
-### Kiểm tra WireGuard
-
-```bash
-wg show
+# Trên VPS1 - xem trạng thái
 wg show wg0
-wg show wg1
+/etc/sdwan/scripts/wg0-up.sh status
+
+# Trên PC1 - verify routing
+curl ifconfig.me              # → Nên thấy 103.109.187.179 (VPS2)
+traceroute 8.8.8.8            # → Nên thấy 103.109.187.182 (VPS1)
 ```
 
-### Kiểm tra ipset
+## Keys đang sử dụng
 
-```bash
-ipset list special_ips | head -20
-ipset list special_ips | wc -l   # Đếm số entries
-```
+| Node | Public Key                                     |
+| ---- | ---------------------------------------------- |
+| VPS1 | `t+4f9tArVGpO+SZREGdA/v1zSFpnanTEvZfiouIkIFg=` |
+| VPS2 | `GIsyc1E01M6moYkhmwfPPWIMFltCG7NcZIZ8b67J0RQ=` |
+| PC1  | `vafYFdIcwLv0LUseYKDE3c0KHqG2VxhJzN1kKAUnsGQ=` |
 
-### Kiểm tra routing rules
+## Xử lý sự cố
 
-```bash
-ip rule show
-ip route show table 100   # Special IPs
-ip route show table 200   # Default via WG2
-```
+| Vấn đề                      | Kiểm tra                                          |
+| --------------------------- | ------------------------------------------------- |
+| PC1 không kết nối được      | `wg show` trên VPS1, kiểm tra handshake           |
+| Traffic không ra VPS2       | `ip rule show`, kiểm tra table 200                |
+| Special IPs không hoạt động | `ipset list special_ips`, `iptables -t mangle -L` |
 
-### Kiểm tra iptables marks
+## License
 
-```bash
-iptables -t mangle -L PREROUTING -v -n
-```
-
-### Xem logs
-
-```bash
-journalctl -u wg-quick@wg0 -f
-journalctl -u wg-quick@wg1 -f
-journalctl -u sdwan-watcher -f
-journalctl -u sdwan-api -f
-```
-
----
-
-## Placeholders cần thay thế
-
-| Placeholder             | Mô tả                         |
-| ----------------------- | ----------------------------- |
-| `<IP_VPS1>`             | IP public của VPS1            |
-| `<IP_VPS2>`             | IP public của VPS2            |
-| `<PC1_PRIVATE_KEY>`     | Private key của PC1           |
-| `<WG1_PRIVATE_KEY>`     | Private key của WG1 (cho wg0) |
-| `<WG1_WG1_PRIVATE_KEY>` | Private key của WG1 (cho wg1) |
-| `<WG2_PRIVATE_KEY>`     | Private key của WG2           |
-| `<PC1_PUBLIC_KEY>`      | Public key của PC1            |
-| `<WG1_PUBLIC_KEY>`      | Public key của WG1 (cho wg0)  |
-| `<WG1_WG1_PUBLIC_KEY>`  | Public key của WG1 (cho wg1)  |
-| `<WG2_PUBLIC_KEY>`      | Public key của WG2            |
-
----
-
-## Lưu ý bảo mật
-
-- ⚠️ Không commit private keys lên git
-- ⚠️ Đổi `API_TOKEN` trong `config.env` thành token mạnh
-- ⚠️ Sử dụng firewall để chỉ cho phép traffic cần thiết
-- ⚠️ API server chỉ nên bind localhost nếu không cần remote access
+MIT
