@@ -37,23 +37,23 @@ PC1 (10.10.0.2) ──wg0:51820──► VPS1 (103.109.187.182)
 | Interface | Type    | Key                                            |
 | --------- | ------- | ---------------------------------------------- |
 | wg0       | Private | `WDKVq4PXGMRP6ATXN3GR4q9uPgP2AEwR0nzm5ozV0E4=` |
-| wg0       | Public  | `t+4f9tArVGpO+SZREGdA/v1zSFpnanTEvZfiouIkIFg=` |
+| wg0       | Public  | `PABCmv2igz9IGPa7uUgFDmQ6OfVOEEDG2DSqAoCySmA=` |
 | wg1       | Private | `oO/8LKJ5X3F8gqI3Qs0VbJy5LNRdutD/rCZc9M0lxHo=` |
-| wg1       | Public  | `Cr18W31rGw5r8rupi52dCmiFr4ncR16slTOCeT9fYTk=` |
+| wg1       | Public  | `62KgOvm8+te7DHdHYvf7D22lF+NDyUQxaucN/Qduc2c=` |
 
 ### VPS8 (vina8) Keys:
 
 | Interface | Type    | Key                                            |
 | --------- | ------- | ---------------------------------------------- |
 | wg1       | Private | `8N6cPMRz7GxQdFV9YPTB5kAlZ3Wm0HsJ4vOoLnE2WXk=` |
-| wg1       | Public  | `yG1CgXZejfGU7lVQ8Fbaz4ZGzKx6Gx13H3+Oo+WpY2A=` |
+| wg1       | Public  | `aD+5ZpaU+Tf8oiWPfeSDSzsqVXPSHgIcMdm4MCecMl8=` |
 
 ### PC1 Keys:
 
 | Type    | Key                                            |
 | ------- | ---------------------------------------------- |
 | Private | `mFT2P7Qx9rKzJW0cXsN5AhB6dE3iL8oGvY1uHkVwR4M=` |
-| Public  | `2HYvgW2/uQiw1BKxIq4+7+WTJ3bt3ztmmmk9om0xgXk=` |
+| Public  | `Pv2II5K98M2Eu18N9Cx5oW0CuUI6U+qpqd8lW45san0=` |
 
 ---
 
@@ -71,7 +71,7 @@ set -e
 
 # Keys đã định sẵn
 VPS8_WG1_PRIVATE="8N6cPMRz7GxQdFV9YPTB5kAlZ3Wm0HsJ4vOoLnE2WXk="
-VPS7_WG1_PUBLIC="Cr18W31rGw5r8rupi52dCmiFr4ncR16slTOCeT9fYTk="
+VPS7_WG1_PUBLIC="62KgOvm8+te7DHdHYvf7D22lF+NDyUQxaucN/Qduc2c="
 
 # Install WireGuard
 apt-get update -qq && apt-get install -y wireguard -qq
@@ -79,7 +79,7 @@ apt-get update -qq && apt-get install -y wireguard -qq
 # Save keys
 mkdir -p /etc/wireguard
 echo "$VPS8_WG1_PRIVATE" > /etc/wireguard/wg1_privatekey
-echo "yG1CgXZejfGU7lVQ8Fbaz4ZGzKx6Gx13H3+Oo+WpY2A=" > /etc/wireguard/wg1_publickey
+echo "aD+5ZpaU+Tf8oiWPfeSDSzsqVXPSHgIcMdm4MCecMl8=" > /etc/wireguard/wg1_publickey
 chmod 600 /etc/wireguard/wg1_privatekey
 
 # Detect network interface
@@ -131,11 +131,11 @@ set -e
 
 # Keys đã định sẵn
 VPS7_WG0_PRIVATE="WDKVq4PXGMRP6ATXN3GR4q9uPgP2AEwR0nzm5ozV0E4="
-VPS7_WG0_PUBLIC="t+4f9tArVGpO+SZREGdA/v1zSFpnanTEvZfiouIkIFg="
+VPS7_WG0_PUBLIC="PABCmv2igz9IGPa7uUgFDmQ6OfVOEEDG2DSqAoCySmA="
 VPS7_WG1_PRIVATE="oO/8LKJ5X3F8gqI3Qs0VbJy5LNRdutD/rCZc9M0lxHo="
-VPS7_WG1_PUBLIC="Cr18W31rGw5r8rupi52dCmiFr4ncR16slTOCeT9fYTk="
-VPS8_WG1_PUBLIC="yG1CgXZejfGU7lVQ8Fbaz4ZGzKx6Gx13H3+Oo+WpY2A="
-PC1_PUBLIC="2HYvgW2/uQiw1BKxIq4+7+WTJ3bt3ztmmmk9om0xgXk="
+VPS7_WG1_PUBLIC="62KgOvm8+te7DHdHYvf7D22lF+NDyUQxaucN/Qduc2c="
+VPS8_WG1_PUBLIC="aD+5ZpaU+Tf8oiWPfeSDSzsqVXPSHgIcMdm4MCecMl8="
+PC1_PUBLIC="Pv2II5K98M2Eu18N9Cx5oW0CuUI6U+qpqd8lW45san0="
 
 # Install dependencies
 apt-get update -qq && apt-get install -y wireguard ipset -qq
@@ -281,7 +281,7 @@ PC1 config với keys đã định sẵn:
 # === PC1 CONFIG ===
 # Keys đã định sẵn
 PC1_PRIVATE="mFT2P7Qx9rKzJW0cXsN5AhB6dE3iL8oGvY1uHkVwR4M="
-VPS7_WG0_PUBLIC="t+4f9tArVGpO+SZREGdA/v1zSFpnanTEvZfiouIkIFg="
+VPS7_WG0_PUBLIC="PABCmv2igz9IGPa7uUgFDmQ6OfVOEEDG2DSqAoCySmA="
 
 # Tạo config file
 cat > pc1.conf << EOF
