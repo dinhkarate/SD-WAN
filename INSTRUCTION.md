@@ -45,22 +45,22 @@ Tài liệu này hướng dẫn **setup** và **clear** cấu hình WireGuard SD
 
 | Interface | Type    | Key                                            |
 | --------- | ------- | ---------------------------------------------- |
-| wg0       | Private | `eFJ1dlBYR01SUDY0SGNIY29PdkF3a0huRGVmZXc9PQ==` |
-| wg0       | Public  | `t+4f9tArVGpO+SZREGdA/v1zSFpnanTEvZfiouIkIFg=` |
+| wg0       | Private | `2BZD5dcIRYgLQ8FVCsq+D4qJvyZ2lFwCCGix2dc41Ww=` |
+| wg0       | Public  | `mXxLYME8NQ101Ka8483NScD8n8VaTN/Cw8GU8G2dR2Y=` |
 
 ### VPS8 (vina8) Keys:
 
 | Interface | Type    | Key                                            |
 | --------- | ------- | ---------------------------------------------- |
 | wg0       | Private | `R0lzeWMxRTAxTTZtb1lraG13ZlBQV0lNRmx0Q0c3TmM=` |
-| wg0       | Public  | `GIsyc1E01M6moYkhmwfPPWIMFltCG7NcZIZ8b67J0RQ=` |
+| wg0       | Public  | `LO0IhOAHk+VPX7Cibkg5iv+LjSSdY6pyWPi8s2baJyo=` |
 
 ### PC1 Keys:
 
 | Type    | Key                                            |
 | ------- | ---------------------------------------------- |
-| Private | `dmFmWUZkSWN3THYwTFVzZVlLREUzYzBLSHFHMlZ4aEo=` |
-| Public  | `vafYFdIcwLv0LUseYKDE3c0KHqG2VxhJzN1kKAUnsGQ=` |
+| Private | `sK1VL7qlLrSrpZscIcHsu0asLk/JOoEtqVFDtKN8K1U=` |
+| Public  | `v5zITcsE3iKMR/BDdT/nKWH19AK3Mru/KJEzfGw/VWk=` |
 
 ---
 
@@ -78,7 +78,7 @@ set -e
 
 # Keys đã định sẵn
 VPS8_WG0_PRIVATE="R0lzeWMxRTAxTTZtb1lraG13ZlBQV0lNRmx0Q0c3TmM="
-VPS7_WG0_PUBLIC="t+4f9tArVGpO+SZREGdA/v1zSFpnanTEvZfiouIkIFg="
+VPS7_WG0_PUBLIC="mXxLYME8NQ101Ka8483NScD8n8VaTN/Cw8GU8G2dR2Y="
 
 # Install WireGuard
 apt-get update -qq && apt-get install -y wireguard -qq
@@ -131,10 +131,10 @@ SSH vào vina7 và paste:
 set -e
 
 # Keys đã định sẵn
-VPS7_WG0_PRIVATE="eFJ1dlBYR01SUDY0SGNIY29PdkF3a0huRGVmZXc9PQ=="
-VPS7_WG0_PUBLIC="t+4f9tArVGpO+SZREGdA/v1zSFpnanTEvZfiouIkIFg="
-VPS8_WG0_PUBLIC="GIsyc1E01M6moYkhmwfPPWIMFltCG7NcZIZ8b67J0RQ="
-PC1_PUBLIC="vafYFdIcwLv0LUseYKDE3c0KHqG2VxhJzN1kKAUnsGQ="
+VPS7_WG0_PRIVATE="2BZD5dcIRYgLQ8FVCsq+D4qJvyZ2lFwCCGix2dc41Ww="
+VPS7_WG0_PUBLIC="mXxLYME8NQ101Ka8483NScD8n8VaTN/Cw8GU8G2dR2Y="
+VPS8_WG0_PUBLIC="LO0IhOAHk+VPX7Cibkg5iv+LjSSdY6pyWPi8s2baJyo="
+PC1_PUBLIC="v5zITcsE3iKMR/BDdT/nKWH19AK3Mru/KJEzfGw/VWk="
 
 # Install dependencies
 apt-get update -qq && apt-get install -y wireguard ipset -qq
@@ -312,8 +312,8 @@ echo "Status: /etc/sdwan/scripts/wg0-up.sh status"
 
 ```bash
 # === PC1 CONFIG ===
-PC1_PRIVATE="dmFmWUZkSWN3THYwTFVzZVlLREUzYzBLSHFHMlZ4aEo="
-VPS7_WG0_PUBLIC="t+4f9tArVGpO+SZREGdA/v1zSFpnanTEvZfiouIkIFg="
+PC1_PRIVATE="sK1VL7qlLrSrpZscIcHsu0asLk/JOoEtqVFDtKN8K1U="
+VPS7_WG0_PUBLIC="mXxLYME8NQ101Ka8483NScD8n8VaTN/Cw8GU8G2dR2Y="
 
 cat > pc1.conf << EOF
 [Interface]
