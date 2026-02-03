@@ -2,14 +2,14 @@
 #
 # VPS1 Policy Routing Script - Method 2 (Using ipset)
 # 
-# Kiến trúc:
-#   PC1 ──wg0──► VPS1 ──wg1──► VPS2 ──► Internet
+# Kiến trúc (LAB 3 - Reversed):
+#   PC1 ──wg0──► VPS1 ──wg1──► VPS2 ──► Internet (China IPs)
 #                 │
-#                 └─ China IPs ─► eth0 (VPS1 IP)
+#                 └─ Other IPs ─► eth0 (VPS1 IP)
 #
 # Traffic flow:
-#   - Packets từ PC1 đến China IPs → mark 200 → ra eth0 (IP VPS1)
-#   - Packets từ PC1 đến các IP khác → mark 100 → forward qua wg1 → VPS2
+#   - Packets từ PC1 đến China IPs → mark 200 → forward qua wg1 → VPS2
+#   - Packets từ PC1 đến các IP khác → mark 100 → ra eth0 (IP VPS1)
 #
 
 # Configuration
@@ -49,10 +49,12 @@ load_ipset() {
 }
 
 ensure_rt_tables() {
-    grep -q '^100 vps2exit' /etc/iproute2/rt_tables 2>/dev/null || \
-        echo '100 vps2exit' >> /etc/iproute2/rt_tables
-    grep -q '^200 vps1exit' /etc/iproute2/rt_tables 2>/dev/null || \
-        echo '200 vps1exit' >> /etc/iproute2/rt_tables
+    # LAB 3: Table 100 = VPS1 exit (Other IPs), Table 200 = VPS2 exit (China IPs)
+    # Check by table number, not name (in case old names exist)
+    grep -q '^100 ' /etc/iproute2/rt_tables 2>/dev/null || \
+        echo '100 vps1exit' >> /etc/iproute2/rt_tables
+    grep -q '^200 ' /etc/iproute2/rt_tables 2>/dev/null || \
+        echo '200 vps2exit' >> /etc/iproute2/rt_tables
 }
 
 setup_routing() {
@@ -65,12 +67,12 @@ setup_routing() {
     
     log "Using gateway: $gateway"
     
-    # Setup routing tables
-    # Table 100: Route through VPS2 (wg1)
-    ip route replace default via $VPS2_IP dev $WG_UPSTREAM_IF table 100
+    # Setup routing tables (LAB 3 - Reversed)
+    # Table 100: Route through local eth0 (for Other IPs - default)
+    ip route replace default via $gateway dev $WAN_IF table 100
     
-    # Table 200: Route through local eth0 (for China IPs)
-    ip route replace default via $gateway dev $WAN_IF table 200
+    # Table 200: Route through VPS2 (wg1) (for China IPs)
+    ip route replace default via $VPS2_IP dev $WG_UPSTREAM_IF table 200
     
     # Add ip rules for fwmark
     ip rule add fwmark 100 lookup 100 prio 100 2>/dev/null || true
@@ -83,16 +85,17 @@ setup_iptables() {
     # Clean existing rules first
     iptables -t mangle -D PREROUTING -i $WG_CLIENT_IF -j MARK --set-mark 100 2>/dev/null || true
     iptables -t mangle -D PREROUTING -i $WG_CLIENT_IF -m set --match-set china_ips dst -j MARK --set-mark 200 2>/dev/null || true
+    iptables -t nat -D POSTROUTING -m mark --mark 100 -o $WAN_IF -j MASQUERADE 2>/dev/null || true
     iptables -t nat -D POSTROUTING -m mark --mark 200 -o $WAN_IF -j MASQUERADE 2>/dev/null || true
     
-    # Mark all traffic from wg0 with 100 (default: go to VPS2)
+    # Mark all traffic from wg0 with 100 (default: go to VPS1 eth0)
     iptables -t mangle -A PREROUTING -i $WG_CLIENT_IF -j MARK --set-mark 100
     
-    # Override mark for China IPs with 200 (go to local eth0)
+    # Override mark for China IPs with 200 (go to VPS2 via wg1)
     iptables -t mangle -A PREROUTING -i $WG_CLIENT_IF -m set --match-set china_ips dst -j MARK --set-mark 200
     
-    # NAT for traffic exiting through eth0 (China IPs)
-    iptables -t nat -A POSTROUTING -m mark --mark 200 -o $WAN_IF -j MASQUERADE
+    # NAT for traffic exiting through eth0 (Other IPs - mark 100)
+    iptables -t nat -A POSTROUTING -m mark --mark 100 -o $WAN_IF -j MASQUERADE
     
     log "iptables rules configured"
 }
@@ -103,6 +106,7 @@ cleanup() {
     # Remove iptables rules
     iptables -t mangle -D PREROUTING -i $WG_CLIENT_IF -j MARK --set-mark 100 2>/dev/null || true
     iptables -t mangle -D PREROUTING -i $WG_CLIENT_IF -m set --match-set china_ips dst -j MARK --set-mark 200 2>/dev/null || true
+    iptables -t nat -D POSTROUTING -m mark --mark 100 -o $WAN_IF -j MASQUERADE 2>/dev/null || true
     iptables -t nat -D POSTROUTING -m mark --mark 200 -o $WAN_IF -j MASQUERADE 2>/dev/null || true
     
     # Remove ip rules
@@ -129,11 +133,11 @@ status() {
     ip rule show | grep -E 'fwmark|100|200' | head -5
     echo ""
     
-    echo "=== Table 100 (VPS2 exit) ==="
+    echo "=== Table 100 (VPS1 local exit - Other IPs) ==="
     ip route show table 100 2>/dev/null || echo "Empty"
     echo ""
     
-    echo "=== Table 200 (VPS1 local exit) ==="
+    echo "=== Table 200 (VPS2 exit - China IPs) ==="
     ip route show table 200 2>/dev/null || echo "Empty"
     echo ""
     
@@ -143,9 +147,9 @@ status() {
     
     echo "=== Test IPs ==="
     echo -n "8.8.8.8 (Google): "
-    ipset test china_ips 8.8.8.8 2>&1 | grep -q "is in set" && echo "China (VPS1)" || echo "Other (VPS2)"
+    ipset test china_ips 8.8.8.8 2>&1 | grep -q "is in set" && echo "China (VPS2)" || echo "Other (VPS1)"
     echo -n "223.5.5.5 (Alibaba): "
-    ipset test china_ips 223.5.5.5 2>&1 | grep -q "is in set" && echo "China (VPS1)" || echo "Other (VPS2)"
+    ipset test china_ips 223.5.5.5 2>&1 | grep -q "is in set" && echo "China (VPS2)" || echo "Other (VPS1)"
 }
 
 case "$1" in
@@ -155,7 +159,7 @@ case "$1" in
         load_ipset
         setup_routing
         setup_iptables
-        log "Split routing enabled: China→VPS1, Others→VPS2"
+        log "Split routing enabled: China→VPS2, Others→VPS1"
         ;;
     down)
         cleanup
