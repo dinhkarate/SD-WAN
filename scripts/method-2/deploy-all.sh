@@ -1,5 +1,6 @@
 #!/bin/bash
-# Full deployment script - run from local machine
+# Full deployment: do2 (VPS1) + fominet (VPS2/OpenWRT)
+# Run from local machine (PC1)
 # Usage: ./deploy-all.sh
 
 set -e
@@ -7,8 +8,9 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-VPS1_IP="103.109.187.182"
-VPS2_IP="103.109.187.179"
+DO2_HOST="do2"              # SSH config alias
+DO2_IP="152.42.238.137"
+FOMINET_HOST="fominet"      # SSH config alias (192.168.20.1)
 
 # Colors
 RED='\033[0;31m'
@@ -24,84 +26,88 @@ error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
 echo ""
 echo "╔══════════════════════════════════════════════════════════════╗"
-echo "║           SD-WAN Method-2 Full Deployment                   ║"
-echo "║  PC1 → VPS1 → VPS2 (exit) / China IPs exit at VPS1          ║"
+echo "║        SD-WAN Lab 3 Method-2 Deployment                     ║"
+echo "║  do2 (VPS1/Hub) + fominet (VPS2/OpenWRT Exit Node)          ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 echo ""
 
-# Check SSH connectivity
-step "1/6 - Checking SSH connectivity..."
-ssh -o ConnectTimeout=5 -o BatchMode=yes root@$VPS1_IP "echo 'VPS1 OK'" || error "Cannot SSH to VPS1"
-ssh -o ConnectTimeout=5 -o BatchMode=yes root@$VPS2_IP "echo 'VPS2 OK'" || error "Cannot SSH to VPS2"
+# ─── Step 1: Check SSH ───
+step "1/7 - Checking SSH connectivity..."
+ssh -o ConnectTimeout=5 -o BatchMode=yes $DO2_HOST "echo 'do2 OK'" || error "Cannot SSH to do2"
+ssh -o ConnectTimeout=10 -o BatchMode=yes $FOMINET_HOST "echo 'fominet OK'" || error "Cannot SSH to fominet"
 log "SSH connectivity OK"
 
-# Upload scripts to VPS1
-step "2/6 - Uploading scripts to VPS1..."
-ssh root@$VPS1_IP "mkdir -p /etc/sdwan/scripts/method-2"
-scp "$SCRIPT_DIR/deploy-vps1.sh" root@$VPS1_IP:/tmp/
-scp "$SCRIPT_DIR/routing-setup.sh" root@$VPS1_IP:/etc/sdwan/scripts/method-2/ 2>/dev/null || true
+# ─── Step 2: Upload to do2 ───
+step "2/7 - Uploading scripts to do2..."
+ssh $DO2_HOST "mkdir -p /etc/sdwan"
+scp "$SCRIPT_DIR/deploy-do2.sh" $DO2_HOST:/tmp/
+scp "$SCRIPT_DIR/routing-setup.sh" $DO2_HOST:/tmp/
 
 # Upload China IPs
 if [ -f "$PROJECT_DIR/chinaip.json" ]; then
     log "Uploading China IPs list..."
-    scp "$PROJECT_DIR/chinaip.json" root@$VPS1_IP:/etc/sdwan/chinaip.txt
+    scp "$PROJECT_DIR/chinaip.json" $DO2_HOST:/etc/sdwan/chinaip.txt
 fi
 
-# Upload scripts to VPS2
-step "3/6 - Uploading scripts to VPS2..."
-scp "$SCRIPT_DIR/deploy-vps2.sh" root@$VPS2_IP:/tmp/
+# ─── Step 3: Upload to fominet ───
+step "3/7 - Uploading scripts to fominet..."
+scp "$SCRIPT_DIR/deploy-fominet.sh" $FOMINET_HOST:/tmp/
 
-# Deploy VPS1
-step "4/6 - Deploying VPS1..."
-ssh root@$VPS1_IP "chmod +x /tmp/deploy-vps1.sh && /tmp/deploy-vps1.sh --force" || error "VPS1 deployment failed"
-VPS1_WG1_PUBKEY=$(ssh root@$VPS1_IP "cat /etc/wireguard/wg1_publickey")
-log "VPS1 deployed. wg1 pubkey: $VPS1_WG1_PUBKEY"
+# ─── Step 4: Deploy fominet first (exit node) ───
+step "4/7 - Deploying fominet (VPS2/Exit Node)..."
+ssh $FOMINET_HOST "chmod +x /tmp/deploy-fominet.sh && /tmp/deploy-fominet.sh --force" || error "fominet deployment failed"
+FOMINET_WG1_PUBKEY=$(ssh $FOMINET_HOST "cat /etc/wireguard/wg1_publickey")
+log "fominet deployed. wg1 pubkey: $FOMINET_WG1_PUBKEY"
 
-# Deploy VPS2
-step "5/6 - Deploying VPS2..."
-ssh root@$VPS2_IP "chmod +x /tmp/deploy-vps2.sh && /tmp/deploy-vps2.sh --force '$VPS1_WG1_PUBKEY'" || error "VPS2 deployment failed"
-VPS2_WG1_PUBKEY=$(ssh root@$VPS2_IP "cat /etc/wireguard/wg1_publickey")
-log "VPS2 deployed. wg1 pubkey: $VPS2_WG1_PUBKEY"
+# ─── Step 5: Deploy do2 ───
+step "5/7 - Deploying do2 (VPS1/Hub)..."
+ssh $DO2_HOST "chmod +x /tmp/deploy-do2.sh && /tmp/deploy-do2.sh --force '$FOMINET_WG1_PUBKEY'" || error "do2 deployment failed"
+DO2_WG1_PUBKEY=$(ssh $DO2_HOST "cat /etc/wireguard/wg1_publickey")
+log "do2 deployed. wg1 pubkey: $DO2_WG1_PUBKEY"
 
-# Update VPS1 with VPS2 pubkey
-log "Linking VPS1 ↔ VPS2..."
-ssh root@$VPS1_IP "wg set wg1 peer $VPS2_WG1_PUBKEY allowed-ips 10.20.0.2/32,0.0.0.0/0"
-ssh root@$VPS1_IP "echo '$VPS2_WG1_PUBKEY' > /etc/wireguard/vps2_wg1_pubkey"
+# ─── Step 6: Link do2 ↔ fominet ───
+step "6/7 - Linking do2 ↔ fominet..."
+# Update do2 with fominet's pubkey
+ssh $DO2_HOST "wg set wg1 peer $FOMINET_WG1_PUBKEY allowed-ips 10.20.0.2/32,0.0.0.0/0 endpoint thatnghiep.ddns.net:51821 persistent-keepalive 25"
+ssh $DO2_HOST "echo '$FOMINET_WG1_PUBKEY' > /etc/wireguard/fominet_wg1_pubkey"
 
-# Verify VPS1 ↔ VPS2 tunnel
-log "Verifying VPS1 ↔ VPS2 tunnel..."
-sleep 2
-ssh root@$VPS1_IP "ping -c 1 -W 2 10.20.0.2" || warn "Cannot ping VPS2 from VPS1"
-ssh root@$VPS2_IP "ping -c 1 -W 2 10.20.0.1" || warn "Cannot ping VPS1 from VPS2"
+# Update fominet with do2's pubkey (via UCI)
+ssh $FOMINET_HOST "uci set network.@wireguard_wg1[0].public_key='$DO2_WG1_PUBKEY' && uci commit network && /etc/init.d/network restart"
 
-# Generate PC1 config
-step "6/6 - Generating PC1 config..."
-VPS1_WG0_PUBKEY=$(ssh root@$VPS1_IP "cat /etc/wireguard/wg0_publickey")
+# Verify tunnel
+log "Verifying do2 ↔ fominet tunnel..."
+sleep 3
+ssh $DO2_HOST "ping -c 2 -W 3 10.20.0.2" && log "do2 → fominet: OK" || warn "do2 → fominet: FAILED"
+ssh $FOMINET_HOST "ping -c 2 -W 3 10.20.0.1" && log "fominet → do2: OK" || warn "fominet → do2: FAILED"
+
+# ─── Step 7: Generate PC1 config ───
+step "7/7 - Generating PC1 config..."
+DO2_WG0_PUBKEY=$(ssh $DO2_HOST "cat /etc/wireguard/wg0_publickey")
 PC1_CONFIG="$PROJECT_DIR/configs/method-2/pc1/wg0.conf"
 
-# Generate new PC1 keys
 PC1_PRIVKEY=$(wg genkey)
 PC1_PUBKEY=$(echo "$PC1_PRIVKEY" | wg pubkey)
 
-mkdir -p "$(dirname "$PC1_CONFIG")"
 cat > "$PC1_CONFIG" << EOF
 # PC1 - WireGuard Client
 # Generated by deploy-all.sh on $(date)
+# do2 (VPS1): $DO2_IP
+# Split: China IPs → fominet, Other IPs → do2
 
 [Interface]
 Address = 10.10.0.2/24
 PrivateKey = $PC1_PRIVKEY
-DNS = 8.8.8.8, 223.5.5.5
+DNS = 8.8.8.8, 1.1.1.1
 
 [Peer]
-PublicKey = $VPS1_WG0_PUBKEY
-Endpoint = $VPS1_IP:51820
+PublicKey = $DO2_WG0_PUBKEY
+Endpoint = $DO2_IP:51820
 AllowedIPs = 0.0.0.0/0
 PersistentKeepalive = 25
 EOF
 
-# Register PC1 with VPS1
-ssh root@$VPS1_IP "wg set wg0 peer $PC1_PUBKEY allowed-ips 10.10.0.2/32"
+# Register PC1 with do2
+ssh $DO2_HOST "wg set wg0 peer $PC1_PUBKEY allowed-ips 10.10.0.2/32"
 log "PC1 config generated and registered"
 
 echo ""
@@ -110,13 +116,14 @@ echo "║                    DEPLOYMENT COMPLETE                       ║"
 echo "╚══════════════════════════════════════════════════════════════╝"
 echo ""
 echo "Architecture:"
-echo "  PC1 (10.10.0.2) → VPS1 (10.10.0.1/10.20.0.1) → VPS2 (10.20.0.2) → Internet"
-echo "                                                  ↑"
-echo "                                            NAT Exit Node"
-echo ""
-echo "Split Routing:"
-echo "  • China IPs   → Exit at VPS1 ($VPS1_IP)"
-echo "  • Other IPs   → Exit at VPS2 ($VPS2_IP)"
+echo "  PC1 (10.10.0.2) ──wg0──► do2 (10.10.0.1 / 10.20.0.1)"
+echo "                              │"
+echo "                    ┌─────────┴─────────┐"
+echo "                    │                   │"
+echo "               Other IPs           China IPs"
+echo "                    │                   │"
+echo "               do2 eth0            wg1 → fominet"
+echo "            ($DO2_IP)         (thatnghiep.ddns.net)"
 echo ""
 echo "PC1 Config: $PC1_CONFIG"
 echo ""
@@ -124,8 +131,8 @@ echo "To connect PC1:"
 echo "  sudo cp $PC1_CONFIG /etc/wireguard/wg0.conf"
 echo "  sudo wg-quick up wg0"
 echo ""
-echo "Test commands:"
-echo "  ping 10.10.0.1      # VPS1"
-echo "  ping 10.20.0.2      # VPS2"
-echo "  traceroute 8.8.8.8  # Should go through VPS2"
-echo "  traceroute 223.5.5.5 # Should go through VPS1"
+echo "Test:"
+echo "  curl ifconfig.me                 # Should show do2 IP (other)"
+echo "  curl --connect-to ::223.5.5.5: ifconfig.me  # China IP test"
+echo "  traceroute 8.8.8.8              # Through do2"
+echo "  traceroute 223.5.5.5            # Through fominet"
