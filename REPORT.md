@@ -9,26 +9,26 @@
 ## 1. Kiến trúc mạng
 
 ```
-┌──────────────┐        WireGuard wg0         ┌───────────────┐       WireGuard wg1        ┌──────────────┐
-│   PC0        │    10.10.0.3 ◄──► 10.10.0.1  │     VPS1      │   10.20.0.1 ◄──► 10.20.0.2│   fominet    │
-│   (vina7)    │═══════════════════════════════│     (do2)     │═══════════════════════════│  (OpenWRT)   │
-│  Hà Nội      │        port 51820             │  Singapore    │       port 51821           │  Việt Nam    │
-│ 103.109.     │  AllowedIPs=0.0.0.0/0         │ 152.42.238.137│  Table=off                 │ 118.71.95.99 │
-│   187.182    │  (full tunnel, fwmark bypass)  │               │  AllowedIPs=0.0.0.0/0      │              │
-└──────────────┘                                └───────┬───────┘                            └──────┬───────┘
-                                                        │                                          │
-                                              ┌─────────┴─────────┐                           ┌────┴────┐
-                                              │   Split Routing    │                           │  NAT    │
-                                              │   Engine (do2)     │                           │ masq=1  │
-                                              ├────────────────────┤                           └────┬────┘
-                                              │                    │                                │
-                                         non-China IP         China IP                         Internet
-                                         fwmark 100           fwmark 200                      (Vietnam ISP)
-                                              │                    │
-                                         eth0 (NAT)          wg1 (NAT)
-                                              │                    │
-                                         Internet              fominet
-                                        (Singapore DO)        (Vietnam)
+┌──────────────┐     WireGuard wg0      ┌──────────────┐     WireGuard wg1     ┌──────────────┐
+│     PC0      │  10.10.0.3 ◄─► 10.10.0.1  │    VPS1      │  10.20.0.1 ◄─► 10.20.0.2  │   fominet    │
+│   (vina7)    │════════════════════│    (do2)      │═══════════════════│  (OpenWRT)   │
+│   Hà Nội     │    port 51820      │  Singapore    │    port 51821     │  Việt Nam    │
+│103.109.187.182│ AllowedIPs=0/0    │152.42.238.137 │ Table=off         │ 118.71.95.99 │
+│              │  fwmark bypass     │               │ AllowedIPs=0/0    │              │
+└──────────────┘                    └───────┬───────┘                   └──────┬───────┘
+                                            │                                 │
+                                  ┌─────────┴─────────┐                 ┌─────┴─────┐
+                                  │  Split Routing     │                 │  NAT      │
+                                  │  Engine (do2)      │                 │  masq=1   │
+                                  ├────────────────────┤                 └─────┬─────┘
+                                  │                    │                       │
+                             non-China IP         China IP                Internet
+                             fwmark 100           fwmark 200            (Vietnam ISP)
+                                  │                    │
+                             eth0 (NAT)           wg1 (NAT)
+                                  │                    │
+                             Internet              fominet
+                            (Singapore DO)        (Vietnam)
 ```
 
 ### Vai trò các thiết bị
@@ -241,4 +241,90 @@ fominet nằm sau router nhà (192.168.1.1). Không cần port forward vì fomin
 
 ## 6. File config đang chạy
 
-Chi tiết config xem phần bên dưới.
+### do2 — wg0 (nhận PC0/PC1)
+
+```ini
+[Interface]
+Address = 10.10.0.1/24
+ListenPort = 51820
+PostUp = /etc/sdwan/routing-setup.sh start
+PostDown = /etc/sdwan/routing-setup.sh stop
+
+[Peer]  # PC0 (vina7)
+PublicKey = 7OE6S77nYS08BdltFumjp5ATlDDtQ+xAUB7GF74AsxM=
+AllowedIPs = 10.10.0.3/32
+```
+
+### do2 — wg1 (tunnel tới fominet)
+
+```ini
+[Interface]
+Address = 10.20.0.1/24
+ListenPort = 51821
+Table = off
+
+[Peer]  # fominet
+PublicKey = p1D7YhLKD/JFfA1C6ZHM/1QnnJqjqDPHhsu7htC6WjI=
+AllowedIPs = 0.0.0.0/0
+Endpoint = thatnghiep.ddns.net:51821
+PersistentKeepalive = 25
+```
+
+### vina7 (PC0) — wg0
+
+```ini
+[Interface]
+Address = 10.10.0.3/24
+
+[Peer]  # do2
+PublicKey = NqBPKP5g2qYt41dBFDH/Q30HzvrXC+6GuE+CNRUYGHE=
+AllowedIPs = 0.0.0.0/0
+Endpoint = 152.42.238.137:51820
+PersistentKeepalive = 25
+```
+
+### fominet — wg1 (UCI managed)
+
+```
+network.wg1 = interface
+  proto = wireguard
+  addresses = 10.20.0.2/24
+  listen_port = 51821
+  mtu = 1420
+
+peer do2:
+  public_key = UkziPdLDaoz+1f8CQ+b+fIUlm+aJNpkTfl4vZp/6Cho=
+  endpoint = 152.42.238.137:51821
+  allowed_ips = 10.20.0.0/24, 10.10.0.0/24
+  persistent_keepalive = 25
+
+firewall zone wg1: masq=1, input/output/forward=ACCEPT
+```
+
+### Routing trên do2
+
+```
+ip rule:
+  prio 99:  fwmark 0xc8 → table vps2_china
+  prio 100: fwmark 0x64 → table vps1_direct
+
+ip route table vps1_direct:
+  default via 152.42.224.1 dev eth0
+
+ip route table vps2_china:
+  default via 10.20.0.2 dev wg1
+
+iptables mangle PREROUTING:
+  -i wg0 → MARK 0x64 (all traffic)
+  -i wg0 -m set --match-set china_ips dst → MARK 0xc8 (China override)
+
+iptables nat POSTROUTING:
+  -m mark --mark 0x64 -o eth0 → MASQUERADE
+  -m mark --mark 0xc8 -o wg1  → MASQUERADE
+  -s 10.10.0.0/24 -o eth0     → MASQUERADE
+
+iptables filter FORWARD:
+  wg0 ↔ eth0: ACCEPT
+  wg0 → wg1: ACCEPT
+  wg1 → wg0: RELATED,ESTABLISHED ACCEPT
+```
